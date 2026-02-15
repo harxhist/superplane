@@ -24,6 +24,7 @@ import gitlabIcon from "@/assets/icons/integrations/gitlab.svg";
 import jiraIcon from "@/assets/icons/integrations/jira.svg";
 import openAiIcon from "@/assets/icons/integrations/openai.svg";
 import claudeIcon from "@/assets/icons/integrations/claude.svg";
+import gcpIcon from "@/assets/icons/integrations/gcp.svg";
 import cursorIcon from "@/assets/icons/integrations/cursor.svg";
 import pagerDutyIcon from "@/assets/icons/integrations/pagerduty.svg";
 import slackIcon from "@/assets/icons/integrations/slack.svg";
@@ -424,6 +425,7 @@ function CategorySection({
       lambda: awsLambdaIcon,
       ecr: awsEcrIcon,
     },
+    gcp: gcpIcon,
   };
 
   // Get integration name from first block if available, or match category name
@@ -501,6 +503,7 @@ function CategorySection({
               ecr: awsEcrIcon,
               lambda: awsLambdaIcon,
             },
+            gcp: gcpIcon,
           };
           const appLogo = nameParts[0] ? appLogoMap[nameParts[0]] : undefined;
           const appIconSrc = typeof appLogo === "string" ? appLogo : nameParts[1] ? appLogo?.[nameParts[1]] : undefined;
