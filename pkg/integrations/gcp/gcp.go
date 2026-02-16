@@ -389,39 +389,39 @@ func (g *GCP) HandleRequest(ctx core.HTTPRequestContext) {
 
 	switch {
 	case strings.HasSuffix(path, "/gcp/regions"):
-		g.handleListRegions(ctx, client, reqCtx)
+		g.handleListRegions(reqCtx, ctx, client)
 	case strings.HasSuffix(path, "/gcp/zones"):
-		g.handleListZones(ctx, client, reqCtx)
+		g.handleListZones(reqCtx, ctx, client)
 	case strings.HasSuffix(path, "/gcp/machine-families"):
-		g.handleListMachineFamilies(ctx, client, reqCtx)
+		g.handleListMachineFamilies(reqCtx, ctx, client)
 	case strings.Contains(path, pathPrefixMachineTypes):
-		g.handleGetMachineType(ctx, client, reqCtx, path)
+		g.handleGetMachineType(reqCtx, ctx, client, path)
 	case strings.HasSuffix(path, "/gcp/machine-types"):
-		g.handleListMachineTypes(ctx, client, reqCtx)
+		g.handleListMachineTypes(reqCtx, ctx, client)
 	case strings.HasSuffix(path, "/gcp/provisioning-models"):
 		g.handleProvisioningModels(ctx)
 	case strings.Contains(path, pathPrefixImageFamily):
-		g.handleGetImageFromFamily(ctx, client, reqCtx, path)
+		g.handleGetImageFromFamily(reqCtx, ctx, client, path)
 	case strings.HasSuffix(path, "/gcp/public-images"):
-		g.handleListPublicImages(ctx, client, reqCtx)
+		g.handleListPublicImages(reqCtx, ctx, client)
 	case strings.HasSuffix(path, "/gcp/custom-images"):
-		g.handleListCustomImages(ctx, client, reqCtx)
+		g.handleListCustomImages(reqCtx, ctx, client)
 	case strings.HasSuffix(path, "/gcp/snapshots"):
-		g.handleListSnapshots(ctx, client, reqCtx)
+		g.handleListSnapshots(reqCtx, ctx, client)
 	case strings.HasSuffix(path, "/gcp/disks"):
-		g.handleListDisks(ctx, client, reqCtx)
+		g.handleListDisks(reqCtx, ctx, client)
 	case strings.HasSuffix(path, "/gcp/disk-types"):
-		g.handleListDiskTypes(ctx, client, reqCtx)
+		g.handleListDiskTypes(reqCtx, ctx, client)
 	case strings.HasSuffix(path, "/gcp/snapshot-schedules"):
-		g.handleListSnapshotSchedules(ctx, client, reqCtx)
+		g.handleListSnapshotSchedules(reqCtx, ctx, client)
 	case strings.HasSuffix(path, "/gcp/networks"):
-		g.handleListNetworks(ctx, client, reqCtx)
+		g.handleListNetworks(reqCtx, ctx, client)
 	case strings.HasSuffix(path, "/gcp/subnetworks"):
-		g.handleListSubnetworks(ctx, client, reqCtx)
+		g.handleListSubnetworks(reqCtx, ctx, client)
 	case strings.HasSuffix(path, "/gcp/addresses"):
-		g.handleListAddresses(ctx, client, reqCtx)
+		g.handleListAddresses(reqCtx, ctx, client)
 	case strings.HasSuffix(path, "/gcp/firewalls"):
-		g.handleListFirewalls(ctx, client, reqCtx)
+		g.handleListFirewalls(reqCtx, ctx, client)
 	default:
 		ctx.Response.WriteHeader(http.StatusNotFound)
 	}
@@ -448,7 +448,7 @@ func pathSuffixAfter(path, prefix string) (suffix string, found bool) {
 	return suffix, suffix != ""
 }
 
-func (g *GCP) handleListRegions(ctx core.HTTPRequestContext, c createvm.Client, reqCtx context.Context) {
+func (g *GCP) handleListRegions(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
 	list, err := createvm.ListRegions(reqCtx, c)
 	if err != nil {
 		writeGCPError(ctx, err)
@@ -457,7 +457,7 @@ func (g *GCP) handleListRegions(ctx core.HTTPRequestContext, c createvm.Client, 
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListZones(ctx core.HTTPRequestContext, c createvm.Client, reqCtx context.Context) {
+func (g *GCP) handleListZones(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
 	region := ctx.Request.URL.Query().Get("region")
 	list, err := createvm.ListZones(reqCtx, c, region)
 	if err != nil {
@@ -467,7 +467,7 @@ func (g *GCP) handleListZones(ctx core.HTTPRequestContext, c createvm.Client, re
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListMachineTypes(ctx core.HTTPRequestContext, c createvm.Client, reqCtx context.Context) {
+func (g *GCP) handleListMachineTypes(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
 	zone, ok := requireQueryParam(ctx, "zone", "")
 	if !ok {
 		return
@@ -480,7 +480,7 @@ func (g *GCP) handleListMachineTypes(ctx core.HTTPRequestContext, c createvm.Cli
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleGetMachineType(ctx core.HTTPRequestContext, c createvm.Client, reqCtx context.Context, path string) {
+func (g *GCP) handleGetMachineType(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client, path string) {
 	zone, ok := requireQueryParam(ctx, "zone", "")
 	if !ok {
 		return
@@ -498,7 +498,7 @@ func (g *GCP) handleGetMachineType(ctx core.HTTPRequestContext, c createvm.Clien
 	writeJSON(ctx, http.StatusOK, mt)
 }
 
-func (g *GCP) handleListMachineFamilies(ctx core.HTTPRequestContext, c createvm.Client, reqCtx context.Context) {
+func (g *GCP) handleListMachineFamilies(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
 	zone, ok := requireQueryParam(ctx, "zone", "")
 	if !ok {
 		return
@@ -520,7 +520,7 @@ func (g *GCP) handleProvisioningModels(ctx core.HTTPRequestContext) {
 	})
 }
 
-func (g *GCP) handleListPublicImages(ctx core.HTTPRequestContext, c createvm.Client, reqCtx context.Context) {
+func (g *GCP) handleListPublicImages(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
 	project := ctx.Request.URL.Query().Get("project")
 	list, err := createvm.ListPublicImages(reqCtx, c, project)
 	if err != nil {
@@ -530,7 +530,7 @@ func (g *GCP) handleListPublicImages(ctx core.HTTPRequestContext, c createvm.Cli
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleGetImageFromFamily(ctx core.HTTPRequestContext, c createvm.Client, reqCtx context.Context, path string) {
+func (g *GCP) handleGetImageFromFamily(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client, path string) {
 	project := ctx.Request.URL.Query().Get("project")
 	family, found := pathSuffixAfter(path, pathPrefixImageFamily)
 	if !found {
@@ -545,7 +545,7 @@ func (g *GCP) handleGetImageFromFamily(ctx core.HTTPRequestContext, c createvm.C
 	writeJSON(ctx, http.StatusOK, img)
 }
 
-func (g *GCP) handleListCustomImages(ctx core.HTTPRequestContext, c createvm.Client, reqCtx context.Context) {
+func (g *GCP) handleListCustomImages(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
 	project := ctx.Request.URL.Query().Get("project")
 	list, err := createvm.ListCustomImages(reqCtx, c, project)
 	if err != nil {
@@ -555,7 +555,7 @@ func (g *GCP) handleListCustomImages(ctx core.HTTPRequestContext, c createvm.Cli
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListSnapshots(ctx core.HTTPRequestContext, c createvm.Client, reqCtx context.Context) {
+func (g *GCP) handleListSnapshots(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
 	project := ctx.Request.URL.Query().Get("project")
 	list, err := createvm.ListSnapshots(reqCtx, c, project)
 	if err != nil {
@@ -565,7 +565,7 @@ func (g *GCP) handleListSnapshots(ctx core.HTTPRequestContext, c createvm.Client
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListDisks(ctx core.HTTPRequestContext, c createvm.Client, reqCtx context.Context) {
+func (g *GCP) handleListDisks(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
 	zone, ok := requireQueryParam(ctx, "zone", "")
 	if !ok {
 		return
@@ -579,7 +579,7 @@ func (g *GCP) handleListDisks(ctx core.HTTPRequestContext, c createvm.Client, re
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListDiskTypes(ctx core.HTTPRequestContext, c createvm.Client, reqCtx context.Context) {
+func (g *GCP) handleListDiskTypes(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
 	zone, ok := requireQueryParam(ctx, "zone", "")
 	if !ok {
 		return
@@ -593,7 +593,7 @@ func (g *GCP) handleListDiskTypes(ctx core.HTTPRequestContext, c createvm.Client
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListSnapshotSchedules(ctx core.HTTPRequestContext, c createvm.Client, reqCtx context.Context) {
+func (g *GCP) handleListSnapshotSchedules(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
 	region, ok := requireQueryParam(ctx, "region", "")
 	if !ok {
 		return
@@ -607,7 +607,7 @@ func (g *GCP) handleListSnapshotSchedules(ctx core.HTTPRequestContext, c createv
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListNetworks(ctx core.HTTPRequestContext, c createvm.Client, reqCtx context.Context) {
+func (g *GCP) handleListNetworks(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
 	project := ctx.Request.URL.Query().Get("project")
 	list, err := createvm.ListNetworks(reqCtx, c, project)
 	if err != nil {
@@ -617,7 +617,7 @@ func (g *GCP) handleListNetworks(ctx core.HTTPRequestContext, c createvm.Client,
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListSubnetworks(ctx core.HTTPRequestContext, c createvm.Client, reqCtx context.Context) {
+func (g *GCP) handleListSubnetworks(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
 	region, ok := requireQueryParam(ctx, "region", "")
 	if !ok {
 		return
@@ -631,7 +631,7 @@ func (g *GCP) handleListSubnetworks(ctx core.HTTPRequestContext, c createvm.Clie
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListAddresses(ctx core.HTTPRequestContext, c createvm.Client, reqCtx context.Context) {
+func (g *GCP) handleListAddresses(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
 	region, ok := requireQueryParam(ctx, "region", "")
 	if !ok {
 		return
@@ -645,7 +645,7 @@ func (g *GCP) handleListAddresses(ctx core.HTTPRequestContext, c createvm.Client
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListFirewalls(ctx core.HTTPRequestContext, c createvm.Client, reqCtx context.Context) {
+func (g *GCP) handleListFirewalls(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
 	project := ctx.Request.URL.Query().Get("project")
 	list, err := createvm.ListFirewalls(reqCtx, c, project)
 	if err != nil {

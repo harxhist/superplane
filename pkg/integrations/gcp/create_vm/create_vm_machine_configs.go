@@ -171,7 +171,7 @@ type machineTypeItem struct {
 	GuestCpus   int64  `json:"guestCpus"`
 	MemoryMb    int64  `json:"memoryMb"`
 	Description string `json:"description"`
-	IsSharedCpu bool   `json:"isSharedCpu"`
+	IsSharedCPU bool   `json:"isSharedCpu"`
 }
 
 type cacheEntry struct {
@@ -221,7 +221,7 @@ func machineTypeFromAPI(it *machineTypeItem) MachineType {
 		GuestCPUs:   int(it.GuestCpus),
 		MemoryMB:    int(it.MemoryMb),
 		Description: it.Description,
-		SharedCPU:   it.IsSharedCpu,
+		SharedCPU:   it.IsSharedCPU,
 		Family:      DeriveFamily(it.Name),
 	}
 }
