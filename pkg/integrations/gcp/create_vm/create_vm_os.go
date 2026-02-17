@@ -101,6 +101,9 @@ func CreateVMOSAndStorageConfigFields() []configuration.Field {
 			TypeOptions: &configuration.TypeOptions{
 				Resource: &configuration.ResourceTypeOptions{
 					Type: ResourceTypeCustomImages,
+					Parameters: []configuration.ParameterRef{
+						{Name: "project", ValueFrom: &configuration.ParameterValueFrom{Field: "project"}},
+					},
 				},
 			},
 			VisibilityConditions: []configuration.VisibilityCondition{
@@ -116,6 +119,9 @@ func CreateVMOSAndStorageConfigFields() []configuration.Field {
 			TypeOptions: &configuration.TypeOptions{
 				Resource: &configuration.ResourceTypeOptions{
 					Type: ResourceTypeSnapshots,
+					Parameters: []configuration.ParameterRef{
+						{Name: "project", ValueFrom: &configuration.ParameterValueFrom{Field: "project"}},
+					},
 				},
 			},
 			VisibilityConditions: []configuration.VisibilityCondition{
@@ -132,6 +138,7 @@ func CreateVMOSAndStorageConfigFields() []configuration.Field {
 				Resource: &configuration.ResourceTypeOptions{
 					Type: ResourceTypeDisks,
 					Parameters: []configuration.ParameterRef{
+						{Name: "project", ValueFrom: &configuration.ParameterValueFrom{Field: "project"}},
 						{Name: "zone", ValueFrom: &configuration.ParameterValueFrom{Field: "zone"}},
 					},
 				},
@@ -150,6 +157,7 @@ func CreateVMOSAndStorageConfigFields() []configuration.Field {
 				Resource: &configuration.ResourceTypeOptions{
 					Type: ResourceTypeDiskTypes,
 					Parameters: []configuration.ParameterRef{
+						{Name: "project", ValueFrom: &configuration.ParameterValueFrom{Field: "project"}},
 						{Name: "zone", ValueFrom: &configuration.ParameterValueFrom{Field: "zone"}},
 						{Name: "bootDiskOnly", Value: strPtr("true")},
 					},
@@ -194,6 +202,7 @@ func CreateVMOSAndStorageConfigFields() []configuration.Field {
 				Resource: &configuration.ResourceTypeOptions{
 					Type: ResourceTypeSnapshotSchedules,
 					Parameters: []configuration.ParameterRef{
+						{Name: "project", ValueFrom: &configuration.ParameterValueFrom{Field: "project"}},
 						{Name: "region", ValueFrom: &configuration.ParameterValueFrom{Field: "region"}},
 					},
 				},
@@ -305,6 +314,7 @@ func CreateVMOSAndStorageConfigFields() []configuration.Field {
 									Resource: &configuration.ResourceTypeOptions{
 										Type: ResourceTypeDisks,
 										Parameters: []configuration.ParameterRef{
+											{Name: "project", ValueFrom: &configuration.ParameterValueFrom{Field: "project"}},
 											{Name: "zone", ValueFrom: &configuration.ParameterValueFrom{Field: "zone"}},
 										},
 									},

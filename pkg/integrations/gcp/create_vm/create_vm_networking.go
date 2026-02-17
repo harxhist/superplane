@@ -147,6 +147,9 @@ func CreateVMNetworkingConfigFields() []configuration.Field {
 			TypeOptions: &configuration.TypeOptions{
 				Resource: &configuration.ResourceTypeOptions{
 					Type: ResourceTypeNetwork,
+					Parameters: []configuration.ParameterRef{
+						{Name: "project", ValueFrom: &configuration.ParameterValueFrom{Field: "project"}},
+					},
 				},
 			},
 		},
@@ -160,6 +163,7 @@ func CreateVMNetworkingConfigFields() []configuration.Field {
 				Resource: &configuration.ResourceTypeOptions{
 					Type: ResourceTypeSubnetwork,
 					Parameters: []configuration.ParameterRef{
+						{Name: "project", ValueFrom: &configuration.ParameterValueFrom{Field: "project"}},
 						{Name: "region", ValueFrom: &configuration.ParameterValueFrom{Field: "region"}},
 					},
 				},
@@ -234,6 +238,7 @@ func CreateVMNetworkingConfigFields() []configuration.Field {
 				Resource: &configuration.ResourceTypeOptions{
 					Type: ResourceTypeAddress,
 					Parameters: []configuration.ParameterRef{
+						{Name: "project", ValueFrom: &configuration.ParameterValueFrom{Field: "project"}},
 						{Name: "region", ValueFrom: &configuration.ParameterValueFrom{Field: "region"}},
 					},
 				},

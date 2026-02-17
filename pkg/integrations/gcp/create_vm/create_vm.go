@@ -171,7 +171,7 @@ type CreateVMConfig struct {
 	MachineFamily          string                  `mapstructure:"machineFamily"`
 	MachineType            string                  `mapstructure:"machineType"`
 	ProvisioningModel      string                  `mapstructure:"provisioningModel"`
-	AutomaticRestart       bool                    `mapstructure:"automaticRestart"`
+	AutomaticRestart       *bool                   `mapstructure:"automaticRestart"`
 	OnHostMaintenance      string                  `mapstructure:"onHostMaintenance"`
 	MetadataItems          []MetadataKeyValue      `mapstructure:"metadataItems"`
 	StartupScript          string                  `mapstructure:"startupScript"`

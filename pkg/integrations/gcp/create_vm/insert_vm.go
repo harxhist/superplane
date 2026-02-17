@@ -89,12 +89,11 @@ func additionalDisksFromOSConfig(c OSAndStorageConfig) []AdditionalDisk {
 }
 
 func managementConfigFromCreateVMConfig(c CreateVMConfig) ManagementConfig {
-	ar := &c.AutomaticRestart
 	return ManagementConfig{
 		MetadataItems:     c.MetadataItems,
 		StartupScript:     c.StartupScript,
 		ShutdownScript:    c.ShutdownScript,
-		AutomaticRestart:  ar,
+		AutomaticRestart:  c.AutomaticRestart,
 		OnHostMaintenance: c.OnHostMaintenance,
 		MaintenancePolicy: c.MaintenancePolicy,
 	}
