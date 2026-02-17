@@ -109,3 +109,22 @@ func Test_BuildNetworkInterfaces(t *testing.T) {
 		assert.Equal(t, StackTypeDualStack, out[0].StackType)
 	})
 }
+
+func Test_BuildInstanceTags(t *testing.T) {
+	t.Run("only network tags", func(t *testing.T) {
+		out := BuildInstanceTags("tag1, tag2", nil)
+		assert.Equal(t, []string{"tag1", "tag2"}, out)
+	})
+	t.Run("only firewall tags", func(t *testing.T) {
+		out := BuildInstanceTags("", []string{"allow-ssh", "http-server"})
+		assert.Equal(t, []string{"allow-ssh", "http-server"}, out)
+	})
+	t.Run("merged and deduplicated", func(t *testing.T) {
+		out := BuildInstanceTags("tag1, tag2", []string{"tag2", "allow-ssh"})
+		assert.Equal(t, []string{"tag1", "tag2", "allow-ssh"}, out)
+	})
+	t.Run("empty both", func(t *testing.T) {
+		out := BuildInstanceTags("", nil)
+		assert.Nil(t, out)
+	})
+}

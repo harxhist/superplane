@@ -108,9 +108,10 @@ type firewallsListResp struct {
 }
 
 type firewallItem struct {
-	Name     string `json:"name"`
-	SelfLink string `json:"selfLink"`
-	Network  string `json:"network"`
+	Name       string   `json:"name"`
+	SelfLink   string   `json:"selfLink"`
+	Network    string   `json:"network"`
+	TargetTags []string `json:"targetTags"`
 }
 
 func ensureProject(project string, c Client) string {
@@ -383,6 +384,50 @@ func ListAddresses(ctx context.Context, c Client, project, region string) ([]Add
 	return out, nil
 }
 
+func getAddressIP(ctx context.Context, c Client, project, region, id string) (string, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", nil
+	}
+	var body []byte
+	var err error
+	if strings.Contains(id, "://") {
+		body, err = c.GetURL(ctx, id)
+	} else if strings.HasPrefix(id, "projects/") {
+		body, err = c.Get(ctx, id)
+	} else {
+		project = ensureProject(project, c)
+		region, errR := ensureNonEmptyRegion(region, "region is required to resolve address by name")
+		if errR != nil {
+			return "", errR
+		}
+		path := fmt.Sprintf("projects/%s/regions/%s/addresses/%s", project, region, id)
+		body, err = c.Get(ctx, path)
+	}
+	if err != nil {
+		return "", err
+	}
+	var a addressItem
+	if err := json.Unmarshal(body, &a); err != nil {
+		return "", fmt.Errorf("parse address: %w", err)
+	}
+	return strings.TrimSpace(a.Address), nil
+}
+
+// ResolveInternalIPAddress returns a literal IP for use as networkIP. If value is a literal IP (no slash),
+// it is returned as-is. If value is a full URL or resource path to a reserved address, it is fetched and
+// the address field (literal IP) is returned. Compute Engine networkInterfaces.networkIP accepts only literal IPs.
+func ResolveInternalIPAddress(ctx context.Context, c Client, project, region, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
+	if !strings.Contains(value, "/") {
+		return value, nil
+	}
+	return getAddressIP(ctx, c, project, region, value)
+}
+
 func ListFirewalls(ctx context.Context, c Client, project string) ([]Firewall, error) {
 	project = ensureProject(project, c)
 	path := fmt.Sprintf("projects/%s/global/firewalls", project)
@@ -402,6 +447,81 @@ func ListFirewalls(ctx context.Context, c Client, project string) ([]Firewall, e
 		out = append(out, Firewall{Name: f.Name, SelfLink: f.SelfLink, Network: f.Network})
 	}
 	return out, nil
+}
+
+// getFirewallTargetTags fetches a single firewall rule by ID (name or selfLink) and returns its targetTags.
+func getFirewallTargetTags(ctx context.Context, c Client, project, id string) ([]string, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, nil
+	}
+	var body []byte
+	var err error
+	if strings.Contains(id, "://") {
+		body, err = c.GetURL(ctx, id)
+	} else {
+		project = ensureProject(project, c)
+		path := fmt.Sprintf("projects/%s/global/firewalls/%s", project, id)
+		body, err = c.Get(ctx, path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	var f firewallItem
+	if err := json.Unmarshal(body, &f); err != nil {
+		return nil, fmt.Errorf("parse firewall: %w", err)
+	}
+	return f.TargetTags, nil
+}
+
+func ResolveFirewallRuleTags(ctx context.Context, c Client, project string, entries []FirewallRuleEntry) ([]string, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]struct{})
+	var out []string
+	for _, e := range entries {
+		id := strings.TrimSpace(e.ID)
+		if id == "" {
+			continue
+		}
+		tags, err := getFirewallTargetTags(ctx, c, project, id)
+		if err != nil {
+			return nil, fmt.Errorf("firewall rule %q: %w", id, err)
+		}
+		for _, t := range tags {
+			t = strings.TrimSpace(t)
+			if t == "" {
+				continue
+			}
+			if _, ok := seen[t]; ok {
+				continue
+			}
+			seen[t] = struct{}{}
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+func BuildInstanceTags(networkTags string, firewallTags []string) []string {
+	out := ParseNetworkTags(networkTags)
+	seen := make(map[string]struct{})
+	for _, t := range out {
+		seen[t] = struct{}{}
+	}
+	for _, t := range firewallTags {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if _, ok := seen[t]; ok {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	return out
 }
 
 func ListNetworkResources(ctx context.Context, c Client, project string) ([]core.IntegrationResource, error) {
@@ -446,7 +566,11 @@ func ListAddressResources(ctx context.Context, c Client, project, region string)
 		if a.Address != "" {
 			label = fmt.Sprintf("%s (%s)", a.Name, a.Address)
 		}
-		out = append(out, core.IntegrationResource{Type: ResourceTypeAddress, Name: label, ID: a.SelfLink})
+		id := a.SelfLink
+		if a.Address != "" {
+			id = a.Address
+		}
+		out = append(out, core.IntegrationResource{Type: ResourceTypeAddress, Name: label, ID: id})
 	}
 	return out, nil
 }

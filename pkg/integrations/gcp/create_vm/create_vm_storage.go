@@ -77,12 +77,24 @@ const osStorageCacheTTL = 24 * time.Hour
 
 func osStorageCacheGet(key string) (any, bool) {
 	osStorageCacheMu.RLock()
-	defer osStorageCacheMu.RUnlock()
 	e, ok := osStorageCache[key]
-	if !ok || e == nil || time.Now().After(e.expires) {
+	if !ok || e == nil {
+		osStorageCacheMu.RUnlock()
 		return nil, false
 	}
-	return e.data, true
+	if time.Now().After(e.expires) {
+		osStorageCacheMu.RUnlock()
+		// Lazy eviction: remove expired entry to avoid unbounded memory growth
+		osStorageCacheMu.Lock()
+		if e2, ok2 := osStorageCache[key]; ok2 && e2 != nil && time.Now().After(e2.expires) {
+			delete(osStorageCache, key)
+		}
+		osStorageCacheMu.Unlock()
+		return nil, false
+	}
+	data := e.data
+	osStorageCacheMu.RUnlock()
+	return data, true
 }
 
 func osStorageCacheSet(key string, data any) {

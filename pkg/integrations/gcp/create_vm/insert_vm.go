@@ -193,6 +193,8 @@ func buildSchedulingAndResourcePolicies(zone string, config CreateVMConfig) (*co
 		scheduling.Preemptible = true
 		scheduling.ProvisioningModel = string(ProvisioningSpot)
 		scheduling.OnHostMaintenance = OnHostMaintenanceTerminate
+		automaticRestart := false
+		scheduling.AutomaticRestart = &automaticRestart
 		return scheduling, resourcePolicies
 	}
 	scheduling.ProvisioningModel = string(ProvisioningStandard)
@@ -422,9 +424,25 @@ func CreateVMAndWait(ctx context.Context, client Client, config CreateVMConfig) 
 	zone = lastSegment(zone)
 	region = lastSegment(region)
 
+	if config.InternalIPType == InternalIPStatic && strings.TrimSpace(config.InternalIPAddress) != "" {
+		resolved, err := ResolveInternalIPAddress(ctx, client, project, region, config.InternalIPAddress)
+		if err != nil {
+			return nil, fmt.Errorf("reserved internal IP: %w", err)
+		}
+		config.InternalIPAddress = resolved
+	}
+
 	instance, err := BuildInstanceFromConfig(project, zone, region, config)
 	if err != nil {
 		return nil, err
+	}
+
+	if len(config.FirewallRules) > 0 {
+		firewallTags, err := ResolveFirewallRuleTags(ctx, client, project, config.FirewallRules)
+		if err != nil {
+			return nil, err
+		}
+		instance.Tags = &compute.Tags{Items: BuildInstanceTags(config.NetworkTags, firewallTags)}
 	}
 
 	body, err := InsertInstance(ctx, client, project, zone, instance)

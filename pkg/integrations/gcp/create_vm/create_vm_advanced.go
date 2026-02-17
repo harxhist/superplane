@@ -99,7 +99,10 @@ func BuildLabels(config AdvancedConfig) map[string]string {
 	out := make(map[string]string)
 	for _, e := range config.Labels {
 		k := strings.TrimSpace(e.Key)
-		if k == "" || out[k] != "" {
+		if k == "" {
+			continue
+		}
+		if _, exists := out[k]; exists {
 			continue
 		}
 		out[k] = strings.TrimSpace(e.Value)

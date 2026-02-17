@@ -186,12 +186,24 @@ var (
 
 func cacheGet(key string) (any, bool) {
 	machineConfigCacheMu.RLock()
-	defer machineConfigCacheMu.RUnlock()
 	e, ok := machineConfigCache[key]
-	if !ok || e == nil || time.Now().After(e.expires) {
+	if !ok || e == nil {
+		machineConfigCacheMu.RUnlock()
 		return nil, false
 	}
-	return e.data, true
+	if time.Now().After(e.expires) {
+		machineConfigCacheMu.RUnlock()
+		// Lazy eviction: remove expired entry to avoid unbounded memory growth
+		machineConfigCacheMu.Lock()
+		if e2, ok2 := machineConfigCache[key]; ok2 && e2 != nil && time.Now().After(e2.expires) {
+			delete(machineConfigCache, key)
+		}
+		machineConfigCacheMu.Unlock()
+		return nil, false
+	}
+	data := e.data
+	machineConfigCacheMu.RUnlock()
+	return data, true
 }
 
 func cacheSet(key string, data any) {
