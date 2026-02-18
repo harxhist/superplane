@@ -11,19 +11,16 @@ import (
 
 	"github.com/mitchellh/mapstructure"
 	"github.com/superplanehq/superplane/pkg/core"
-	createvm "github.com/superplanehq/superplane/pkg/integrations/gcp/create_vm"
-	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
-
-var _ createvm.Client = (*Client)(nil)
 
 const defaultComputeBaseURL = "https://compute.googleapis.com/compute/v1"
 
 type Client struct {
-	tokenSource oauth2.TokenSource
-	http        core.HTTPContext
-	projectID   string
-	baseURL     string
+	creds     *google.Credentials
+	http      core.HTTPContext
+	projectID string
+	baseURL   string
 }
 
 func NewClient(httpClient core.HTTPContext, integration core.IntegrationContext) (*Client, error) {
@@ -31,7 +28,7 @@ func NewClient(httpClient core.HTTPContext, integration core.IntegrationContext)
 		return nil, fmt.Errorf("integration context is required")
 	}
 
-	ts, err := TokenSourceFromIntegration(integration)
+	creds, err := CredentialsFromIntegration(integration)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get GCP credentials: %w", err)
 	}
@@ -50,10 +47,10 @@ func NewClient(httpClient core.HTTPContext, integration core.IntegrationContext)
 	}
 
 	return &Client{
-		tokenSource: ts,
-		http:        httpClient,
-		projectID:   projectID,
-		baseURL:     defaultComputeBaseURL,
+		creds:     creds,
+		http:      httpClient,
+		projectID: projectID,
+		baseURL:   defaultComputeBaseURL,
 	}, nil
 }
 
@@ -66,7 +63,7 @@ func (c *Client) BaseURL() string {
 }
 
 func (c *Client) ExecRequest(ctx context.Context, method, url string, body io.Reader) ([]byte, error) {
-	token, err := c.tokenSource.Token()
+	token, err := c.creds.TokenSource.Token()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get GCP access token: %w", err)
 	}

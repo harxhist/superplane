@@ -17,7 +17,7 @@ func Test_OnVMCreated_Metadata(t *testing.T) {
 	trigger := &OnVMCreated{}
 	assert.Equal(t, "gcp.onVMCreated", trigger.Name())
 	assert.Equal(t, "On VM Created", trigger.Label())
-	assert.Equal(t, "Emit when a new Compute Engine VM is created (provisioning succeeded)", trigger.Description())
+	assert.Equal(t, "Emits when a new Compute Engine VM is created (provisioning succeeded). Trigger uses a Cloud Logging sink to Pub/Sub and emits the VM creation payload to start SuperPlane workflow executions.", trigger.Description())
 	assert.NotEmpty(t, trigger.Documentation())
 	assert.Equal(t, "gcp", trigger.Icon())
 	assert.Equal(t, "gray", trigger.Color())
@@ -27,10 +27,13 @@ func Test_OnVMCreated_Metadata(t *testing.T) {
 func Test_OnVMCreated_Configuration(t *testing.T) {
 	trigger := &OnVMCreated{}
 	fields := trigger.Configuration()
-	require.Len(t, fields, 1)
+	require.Len(t, fields, 2)
 	assert.Equal(t, "projectId", fields[0].Name)
 	assert.Equal(t, "Project ID", fields[0].Label)
-	assert.Equal(t, "Only trigger for VMs created in this project (leave empty for any project).", fields[0].Description)
+	assert.True(t, fields[0].Required)
+	assert.Equal(t, "region", fields[1].Name)
+	assert.Equal(t, "Region", fields[1].Label)
+	assert.Equal(t, "us-central1", fields[1].Default)
 }
 
 func Test_OnVMCreated_ExampleData(t *testing.T) {

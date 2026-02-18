@@ -112,9 +112,12 @@ func startWorkers(encryptor crypto.Encryptor, registry *registry.Registry, oidcP
 		go w.Start(context.Background())
 	}
 
-	if os.Getenv("START_WEBHOOK_PROVISIONER") == "yes" {
-		log.Println("Starting Webhook Provisioner")
-
+	// Start Webhook Provisioner when internal API runs so integration webhooks (e.g. GCP On VM Created) get provisioned.
+	// Can be disabled by setting START_WEBHOOK_PROVISIONER=no.
+	if os.Getenv("START_WEBHOOK_PROVISIONER") != "no" {
+		if os.Getenv("START_WEBHOOK_PROVISIONER") == "yes" {
+			log.Println("Starting Webhook Provisioner")
+		}
 		webhookBaseURL := getWebhookBaseURL(baseURL)
 		w := workers.NewWebhookProvisioner(webhookBaseURL, encryptor, registry)
 		go w.Start(context.Background())

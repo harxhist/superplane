@@ -14,11 +14,8 @@ import (
 )
 
 const (
-	// CloudEvents type for Cloud Audit Logs (Eventarc).
-	auditLogEventType = "google.cloud.audit.log.v1.written"
-	// Compute Engine service name in audit logs.
-	computeServiceName = "compute.googleapis.com"
-	// Method names for VM instance creation
+	auditLogEventType          = "google.cloud.audit.log.v1.written"
+	computeServiceName         = "compute.googleapis.com"
 	instancesInsertMethod      = "v1.compute.instances.insert"
 	instancesInsertMethodBeta  = "beta.compute.instances.insert"
 	instancesInsertMethodShort = "compute.instances.insert"
@@ -78,6 +75,7 @@ type OnVMCreated struct{}
 
 type OnVMCreatedConfiguration struct {
 	ProjectID string `json:"projectId" mapstructure:"projectId"`
+	Region    string `json:"region" mapstructure:"region"`
 }
 
 func (t *OnVMCreated) Name() string {
@@ -89,21 +87,23 @@ func (t *OnVMCreated) Label() string {
 }
 
 func (t *OnVMCreated) Description() string {
-	return "Emit when a new Compute Engine VM is created (provisioning succeeded)"
+	return "Emits when a new Compute Engine VM is created (provisioning succeeded). Trigger uses a Cloud Logging sink to Pub/Sub and emits the VM creation payload to start SuperPlane workflow executions."
 }
 
 func (t *OnVMCreated) Documentation() string {
 	return "The On VM Created trigger starts a workflow execution when a new Compute Engine VM is created and provisioning has succeeded.\n\n" +
+		"**Trigger behavior:** The trigger uses a **Cloud Logging sink to Pub/Sub**: VM create audit logs are exported to a Pub/Sub topic and delivered to SuperPlane via a push subscription. No Eventarc or Cloud Run is used.\n\n" +
 		"## Use Cases\n\n" +
 		"- **Post-provisioning automation**: Run configuration, monitoring, or security setup after a VM is created\n" +
 		"- **Inventory and compliance**: Record new VMs or trigger audits\n" +
 		"- **Notifications**: Notify teams or systems when new VMs appear in a project or zone\n\n" +
-		"## Event Source\n\n" +
-		"This trigger expects events from Google Cloud via **Eventarc** (Cloud Audit Logs) or a **Cloud Logging sink to Pub/Sub** with push to the trigger webhook URL.\n\n" +
-		"1. **Eventarc (recommended)**\n   Create an Eventarc trigger with:\n   - **Event type**: Cloud Audit Log\n   - **Log type**: Admin Activity (VM create is an admin write)\n   - **Filters**: protoPayload.serviceName=\"compute.googleapis.com\", protoPayload.methodName=\"v1.compute.instances.insert\"\n   - **Destination**: HTTP destination (SuperPlane webhook URL for this trigger)\n\n" +
-		"2. **Log sink + Pub/Sub**\n   Create a log sink that writes to a Pub/Sub topic (filter as above), then create a push subscription to the trigger webhook URL.\n\n" +
+		"## Automatic setup\n\n" +
+		"When you set **Project ID** (and optionally **Region**), SuperPlane automatically creates a **Cloud Logging sink** that exports VM create audit logs to a **Pub/Sub** topic and a **push subscription** that sends events to this workflow. No manual sink or Pub/Sub setup is required.\n\n" +
+		"**Required GCP setup:** Enable the **Pub/Sub** and **Logging** APIs in your project and grant the integration's service account `roles/pubsub.admin` and `roles/logging.configWriter`.\n\n" +
+		"**Local testing:** Use ngrok (`ngrok http 8000`) and set `BASE_URL` and `WEBHOOKS_BASE_URL` to the ngrok HTTPS URL so GCP can reach the webhook.\n\n" +
 		"## Configuration\n\n" +
-		"- **Project ID**: Optional. Only emit for VMs created in this project.\n\n" +
+		"- **Project ID**: Required. The GCP project where the log sink and Pub/Sub resources are created and where VM create events are received.\n" +
+		"- **Region**: Optional. Default: us-central1. Used for resource naming; audit logs are project-wide.\n\n" +
 		"## Event Data\n\n" +
 		"Each event includes the full CloudEvents audit payload, including resourceName (e.g. projects/my-project/zones/us-central1-a/instances/my-vm), serviceName (compute.googleapis.com), methodName (v1.compute.instances.insert), and data (decoded audit log entry)."
 }
@@ -122,8 +122,16 @@ func (t *OnVMCreated) Configuration() []configuration.Field {
 			Name:        "projectId",
 			Label:       "Project ID",
 			Type:        configuration.FieldTypeString,
+			Required:    true,
+			Description: "GCP project where the webhook is registered and where VM create events are received. Required for automatic setup.",
+		},
+		{
+			Name:        "region",
+			Label:       "Region",
+			Type:        configuration.FieldTypeString,
 			Required:    false,
-			Description: "Only trigger for VMs created in this project (leave empty for any project).",
+			Description: "Region used for resource naming (e.g. us-central1). Default: us-central1. Audit logs are project-wide.",
+			Default:     "us-central1",
 		},
 	}
 }
@@ -167,19 +175,28 @@ func resolvePayloadBytes(body []byte) ([]byte, error) {
 }
 
 func (t *OnVMCreated) Setup(ctx core.TriggerContext) error {
-	var metadata OnVMCreatedMetadata
-	_ = mapstructure.Decode(ctx.Metadata.Get(), &metadata)
-
-	if metadata.WebhookURL != "" {
-		return nil
+	if ctx.Integration == nil {
+		return fmt.Errorf("connect the GCP integration to this trigger to enable automatic webhook registration with Google Cloud (Cloud Logging sink to Pub/Sub)")
 	}
 
-	webhookURL, err := ctx.Webhook.Setup()
-	if err != nil {
-		return fmt.Errorf("failed to setup webhook: %w", err)
+	var config OnVMCreatedConfiguration
+	if err := mapstructure.Decode(ctx.Configuration, &config); err != nil {
+		return fmt.Errorf("failed to decode configuration: %w", err)
+	}
+	projectID := strings.TrimSpace(config.ProjectID)
+	if projectID == "" {
+		return fmt.Errorf("project ID is required for automatic registration of the webhook with Google Cloud; set Project ID in the trigger configuration")
 	}
 
-	return ctx.Metadata.Set(OnVMCreatedMetadata{WebhookURL: webhookURL})
+	webhookConfig := map[string]any{
+		"projectId": projectID,
+		"region":    strings.TrimSpace(config.Region),
+	}
+	if err := ctx.Integration.RequestWebhook(webhookConfig); err != nil {
+		return fmt.Errorf("failed to request webhook for On VM Created: %w", err)
+	}
+
+	return ctx.Metadata.Set(OnVMCreatedMetadata{WebhookURL: "(registered automatically)"})
 }
 
 func (t *OnVMCreated) Actions() []core.Action {

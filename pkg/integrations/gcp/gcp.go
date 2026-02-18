@@ -23,7 +23,7 @@ const (
 )
 
 func init() {
-	registry.RegisterIntegration("gcp", &GCP{})
+	registry.RegisterIntegrationWithWebhookHandler("gcp", &GCP{}, &WebhookHandler{})
 	createvm.SetClientFactory(func(ctx core.ExecutionContext) (createvm.Client, error) {
 		return NewClient(ctx.HTTP, ctx.Integration)
 	})
@@ -228,7 +228,6 @@ func (g *GCP) syncWIF(ctx core.SyncContext, config Configuration) error {
 }
 
 func (g *GCP) syncServiceAccountKey(ctx core.SyncContext, config Configuration) error {
-	// Sensitive config is stored encrypted; get decrypted key via GetConfig.
 	keyJSON, err := ctx.Integration.GetConfig("serviceAccountKey")
 	if err != nil {
 		return fmt.Errorf("failed to read service account key: %w", err)
