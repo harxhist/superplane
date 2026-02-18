@@ -272,32 +272,49 @@ func CreateVMNetworkingConfigFields() []configuration.Field {
 			},
 		},
 		{
-			Name:        "firewallRules",
-			Label:       "Firewall rules",
+			Name:        "createFirewallRules",
+			Label:       "Create firewall rules",
 			Type:        configuration.FieldTypeList,
 			Required:    false,
 			Togglable:   true,
-			Description: "Select firewall rules that apply to this instance.",
+			Description: "Create new firewall rules in the project and apply their target tag to this instance (e.g. allow SSH from any IP, or HTTP/HTTPS from a specific IP).",
 			TypeOptions: &configuration.TypeOptions{
 				List: &configuration.ListTypeOptions{
-					ItemLabel: "Firewall rule",
+					ItemLabel: "Firewall rule to create",
 					ItemDefinition: &configuration.ListItemDefinition{
 						Type: configuration.FieldTypeObject,
 						Schema: []configuration.Field{
 							{
-								Name:        "id",
-								Label:       "Firewall rule",
-								Type:        configuration.FieldTypeIntegrationResource,
-								Required:    false,
-								Description: "Select a firewall rule.",
-								TypeOptions: &configuration.TypeOptions{
-									Resource: &configuration.ResourceTypeOptions{
-										Type: ResourceTypeFirewall,
-										Parameters: []configuration.ParameterRef{
-											{Name: "project", ValueFrom: &configuration.ParameterValueFrom{Field: "project"}},
-										},
-									},
-								},
+								Name:        "name",
+								Label:       "Rule name",
+								Type:        configuration.FieldTypeString,
+								Required:    true,
+								Description: "Unique name for the firewall rule (lowercase, numbers, hyphens; 1–63 chars).",
+								Placeholder: "e.g. allow-ssh",
+							},
+							{
+								Name:        "allowed",
+								Label:       "Allowed",
+								Type:        configuration.FieldTypeString,
+								Required:    true,
+								Description: "Protocol and ports: tcp:22 (SSH), tcp:80,tcp:443 (HTTP/HTTPS), or e.g. udp:53.",
+								Placeholder: "e.g. tcp:22 or tcp:80,tcp:443",
+							},
+							{
+								Name:        "sourceRanges",
+								Label:       "Source ranges",
+								Type:        configuration.FieldTypeString,
+								Required:    true,
+								Description: "CIDR ranges that can reach the VM (e.g. 0.0.0.0/0 for any IP, or 203.0.113.50/32 for one IP).",
+								Placeholder: "e.g. 0.0.0.0/0",
+							},
+							{
+								Name:        "targetTag",
+								Label:       "Target tag",
+								Type:        configuration.FieldTypeString,
+								Required:    true,
+								Description: "Tag applied to this rule and to the VM so the rule applies (e.g. ssh or web).",
+								Placeholder: "e.g. ssh",
 							},
 						},
 					},
@@ -454,61 +471,6 @@ func ListFirewalls(ctx context.Context, c Client, project string) ([]Firewall, e
 	return out, nil
 }
 
-// getFirewallTargetTags fetches a single firewall rule by ID (name or selfLink) and returns its targetTags.
-func getFirewallTargetTags(ctx context.Context, c Client, project, id string) ([]string, error) {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return nil, nil
-	}
-	var body []byte
-	var err error
-	if strings.Contains(id, "://") {
-		body, err = c.GetURL(ctx, id)
-	} else {
-		project = ensureProject(project, c)
-		path := fmt.Sprintf("projects/%s/global/firewalls/%s", project, id)
-		body, err = c.Get(ctx, path)
-	}
-	if err != nil {
-		return nil, err
-	}
-	var f firewallItem
-	if err := json.Unmarshal(body, &f); err != nil {
-		return nil, fmt.Errorf("parse firewall: %w", err)
-	}
-	return f.TargetTags, nil
-}
-
-func ResolveFirewallRuleTags(ctx context.Context, c Client, project string, entries []FirewallRuleEntry) ([]string, error) {
-	if len(entries) == 0 {
-		return nil, nil
-	}
-	seen := make(map[string]struct{})
-	var out []string
-	for _, e := range entries {
-		id := strings.TrimSpace(e.ID)
-		if id == "" {
-			continue
-		}
-		tags, err := getFirewallTargetTags(ctx, c, project, id)
-		if err != nil {
-			return nil, fmt.Errorf("firewall rule %q: %w", id, err)
-		}
-		for _, t := range tags {
-			t = strings.TrimSpace(t)
-			if t == "" {
-				continue
-			}
-			if _, ok := seen[t]; ok {
-				continue
-			}
-			seen[t] = struct{}{}
-			out = append(out, t)
-		}
-	}
-	return out, nil
-}
-
 func BuildInstanceTags(networkTags string, firewallTags []string) []string {
 	out := ParseNetworkTags(networkTags)
 	seen := make(map[string]struct{})
@@ -527,6 +489,129 @@ func BuildInstanceTags(networkTags string, firewallTags []string) []string {
 		out = append(out, t)
 	}
 	return out
+}
+
+// parseAllowed parses an "allowed" string like "tcp:22" or "tcp:80,tcp:443" into GCP FirewallAllowed entries.
+// Format: comma-separated protocol:port (e.g. tcp:22, udp:53). Same protocol can appear multiple times; ports are grouped.
+func parseAllowed(s string) ([]*compute.FirewallAllowed, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, fmt.Errorf("allowed is required")
+	}
+	// Group by protocol: map[protocol][]port
+	byProto := make(map[string][]string)
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		idx := strings.LastIndex(part, ":")
+		if idx < 0 {
+			return nil, fmt.Errorf("invalid allowed %q: expected protocol:port (e.g. tcp:22)", part)
+		}
+		proto := strings.TrimSpace(part[:idx])
+		port := strings.TrimSpace(part[idx+1:])
+		if proto == "" {
+			return nil, fmt.Errorf("invalid allowed %q: protocol is empty", part)
+		}
+		if port != "" {
+			byProto[proto] = append(byProto[proto], port)
+		} else {
+			byProto[proto] = nil // all ports
+		}
+	}
+	if len(byProto) == 0 {
+		return nil, fmt.Errorf("allowed is required")
+	}
+	out := make([]*compute.FirewallAllowed, 0, len(byProto))
+	for proto, ports := range byProto {
+		a := &compute.FirewallAllowed{IPProtocol: proto}
+		if len(ports) > 0 {
+			a.Ports = ports
+		}
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+// CreateFirewallRule creates a single firewall rule in the project. If the rule already exists (409), it is treated as success.
+func CreateFirewallRule(ctx context.Context, c Client, project, network string, rule CreateFirewallRuleEntry) error {
+	name := strings.TrimSpace(rule.Name)
+	if name == "" {
+		return fmt.Errorf("firewall rule name is required")
+	}
+	allowed, err := parseAllowed(rule.Allowed)
+	if err != nil {
+		return err
+	}
+	sourceRanges := strings.Split(rule.SourceRanges, ",")
+	for i := range sourceRanges {
+		sourceRanges[i] = strings.TrimSpace(sourceRanges[i])
+		if sourceRanges[i] == "" {
+			continue
+		}
+	}
+	trimmed := make([]string, 0, len(sourceRanges))
+	for _, r := range sourceRanges {
+		if r != "" {
+			trimmed = append(trimmed, r)
+		}
+	}
+	if len(trimmed) == 0 {
+		return fmt.Errorf("sourceRanges is required")
+	}
+	targetTag := strings.TrimSpace(rule.TargetTag)
+	if targetTag == "" {
+		return fmt.Errorf("targetTag is required")
+	}
+	project = ensureProject(project, c)
+	networkURL := resolveNetworkURL(project, network)
+	if networkURL == "" {
+		networkURL = fmt.Sprintf("projects/%s/global/networks/default", project)
+	}
+	fw := &compute.Firewall{
+		Name:         name,
+		Network:      networkURL,
+		Direction:    "INGRESS",
+		Allowed:      allowed,
+		SourceRanges: trimmed,
+		TargetTags:   []string{targetTag},
+	}
+	path := fmt.Sprintf("projects/%s/global/firewalls", project)
+	_, err = c.Post(ctx, path, fw)
+	if err != nil {
+		errStr := err.Error()
+		if strings.Contains(errStr, "already exists") || strings.Contains(errStr, "409") {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// EnsureFirewallRules creates each rule and returns the list of target tags to apply to the instance.
+func EnsureFirewallRules(ctx context.Context, c Client, project, network string, rules []CreateFirewallRuleEntry) ([]string, error) {
+	if len(rules) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]struct{})
+	var tags []string
+	for _, r := range rules {
+		if strings.TrimSpace(r.Name) == "" {
+			continue
+		}
+		if err := CreateFirewallRule(ctx, c, project, network, r); err != nil {
+			return nil, fmt.Errorf("create firewall rule %q: %w", r.Name, err)
+		}
+		tag := strings.TrimSpace(r.TargetTag)
+		if tag != "" {
+			if _, ok := seen[tag]; !ok {
+				seen[tag] = struct{}{}
+				tags = append(tags, tag)
+			}
+		}
+	}
+	return tags, nil
 }
 
 func ListNetworkResources(ctx context.Context, c Client, project string) ([]core.IntegrationResource, error) {
@@ -601,20 +686,23 @@ func ListFirewallResources(ctx context.Context, c Client, project string) ([]cor
 }
 
 type NetworkingConfig struct {
-	Network           string              `mapstructure:"network"`
-	Subnetwork        string              `mapstructure:"subnetwork"`
-	NicType           string              `mapstructure:"nicType"`
-	InternalIPType    string              `mapstructure:"internalIPType"`
-	InternalIPAddress string              `mapstructure:"internalIPAddress"`
-	ExternalIPType    string              `mapstructure:"externalIPType"`
-	ExternalIPAddress string              `mapstructure:"externalIPAddress"`
-	NetworkTags       string              `mapstructure:"networkTags"`
-	StackType         string              `mapstructure:"stackType"`
-	FirewallRules     []FirewallRuleEntry `mapstructure:"firewallRules"`
+	Network             string                    `mapstructure:"network"`
+	Subnetwork          string                    `mapstructure:"subnetwork"`
+	NicType             string                    `mapstructure:"nicType"`
+	InternalIPType      string                    `mapstructure:"internalIPType"`
+	InternalIPAddress   string                    `mapstructure:"internalIPAddress"`
+	ExternalIPType      string                    `mapstructure:"externalIPType"`
+	ExternalIPAddress   string                    `mapstructure:"externalIPAddress"`
+	NetworkTags         string                    `mapstructure:"networkTags"`
+	StackType           string                    `mapstructure:"stackType"`
+	CreateFirewallRules []CreateFirewallRuleEntry `mapstructure:"createFirewallRules"`
 }
 
-type FirewallRuleEntry struct {
-	ID string `mapstructure:"id"`
+type CreateFirewallRuleEntry struct {
+	Name         string `mapstructure:"name"`
+	Allowed      string `mapstructure:"allowed"`
+	SourceRanges string `mapstructure:"sourceRanges"`
+	TargetTag    string `mapstructure:"targetTag"`
 }
 
 func ParseNetworkTags(s string) []string {

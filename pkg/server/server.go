@@ -390,11 +390,11 @@ func getWebhookBaseURL(baseURL string) string {
 }
 
 /*
- * 512KB is the default maximum response size for HTTP responses.
+ * 8MB is the default maximum response size for HTTP responses.
  * This prevents component/trigger implementations from using too much memory,
  * and also from emitting large events.
  */
-var DefaultMaxHTTPResponseBytes int64 = 2 * 1024 * 1024
+var DefaultMaxHTTPResponseBytes int64 = 8 * 1024 * 1024
 
 /*
  * Default blocked HTTP hosts include:

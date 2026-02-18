@@ -364,7 +364,12 @@ func (g *GCP) ListResources(resourceType string, ctx core.ListResourcesContext) 
 		}
 		return createvm.ListAddressResources(reqCtx, client, ctx.Parameters["project"], region)
 	case createvm.ResourceTypeFirewall:
-		return createvm.ListFirewallResources(reqCtx, client, ctx.Parameters["project"])
+		resources, err := createvm.ListFirewallResources(reqCtx, client, ctx.Parameters["project"])
+		if err != nil {
+			ctx.Logger.WithError(err).WithField("project", ctx.Parameters["project"]).Error("list firewall resources failed; returning empty list")
+			return []core.IntegrationResource{}, nil
+		}
+		return resources, nil
 	default:
 		return nil, nil
 	}

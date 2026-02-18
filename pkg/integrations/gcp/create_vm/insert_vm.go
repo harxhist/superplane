@@ -436,11 +436,15 @@ func CreateVMAndWait(ctx context.Context, client Client, config CreateVMConfig) 
 		return nil, err
 	}
 
-	if len(config.FirewallRules) > 0 {
-		firewallTags, err := ResolveFirewallRuleTags(ctx, client, project, config.FirewallRules)
+	var firewallTags []string
+	if len(config.CreateFirewallRules) > 0 {
+		createdTags, err := EnsureFirewallRules(ctx, client, project, config.Network, config.CreateFirewallRules)
 		if err != nil {
 			return nil, err
 		}
+		firewallTags = append(firewallTags, createdTags...)
+	}
+	if len(firewallTags) > 0 {
 		instance.Tags = &compute.Tags{Items: BuildInstanceTags(config.NetworkTags, firewallTags)}
 	}
 

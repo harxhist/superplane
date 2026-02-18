@@ -66,6 +66,10 @@ func Test_isPublicImageProject(t *testing.T) {
 	assert.True(t, isPublicImageProject("ubuntu-os-cloud"))
 	assert.True(t, isPublicImageProject("windows-cloud"))
 	assert.True(t, isPublicImageProject("rocky-linux-cloud"))
+	assert.True(t, isPublicImageProject("deeplearning-platform-release"))
+	assert.True(t, isPublicImageProject("ubuntu-os-pro-cloud"))
+	assert.True(t, isPublicImageProject("suse-byos-cloud"))
+	assert.True(t, isPublicImageProject("rhel-cloud"))
 	assert.False(t, isPublicImageProject("my-custom-project"))
 	assert.False(t, isPublicImageProject(""))
 }
@@ -175,6 +179,57 @@ func Test_ListPublicImages(t *testing.T) {
 		require.Len(t, list, 2)
 		assert.Equal(t, "debian-12", list[0].Name)
 		assert.Equal(t, "debian-11", list[1].Name)
+	})
+
+	t.Run("ubuntu images sorted with modern LTS first", func(t *testing.T) {
+		resp := imagesListResp{
+			Items: []*imageItem{
+				{Name: "ubuntu-1204-precise-v20150625", Family: "ubuntu-1204-precise", SelfLink: "https://.../ubuntu-1204-precise"},
+				{Name: "ubuntu-2204-jammy-v20240101", Family: "ubuntu-2204-lts", SelfLink: "https://.../ubuntu-2204-jammy"},
+				{Name: "ubuntu-2404-noble-v20240601", Family: "ubuntu-2404-lts", SelfLink: "https://.../ubuntu-2404-noble"},
+			},
+		}
+		body, _ := json.Marshal(resp)
+		c := &mockOSClient{
+			projectID: "my-project",
+			get: func(_ context.Context, path string) ([]byte, error) {
+				return body, nil
+			},
+		}
+		list, err := ListPublicImages(ctx, c, "ubuntu-os-cloud")
+		require.NoError(t, err)
+		require.Len(t, list, 3)
+		assert.Equal(t, "ubuntu-2404-noble-v20240601", list[0].Name, "ubuntu-24 first")
+		assert.Equal(t, "ubuntu-2204-jammy-v20240101", list[1].Name, "ubuntu-22 second")
+		assert.Equal(t, "ubuntu-1204-precise-v20150625", list[2].Name, "ubuntu-12 last")
+	})
+
+	t.Run("pagination fetches all pages", func(t *testing.T) {
+		page1 := imagesListResp{
+			Items:         []*imageItem{{Name: "img-1", Family: "f1", SelfLink: "https://.../img-1"}},
+			NextPageToken: "next",
+		}
+		page2 := imagesListResp{Items: []*imageItem{{Name: "img-2", Family: "f2", SelfLink: "https://.../img-2"}}}
+		body1, _ := json.Marshal(page1)
+		body2, _ := json.Marshal(page2)
+		callCount := 0
+		c := &mockOSClient{
+			projectID: "my-project",
+			get: func(_ context.Context, path string) ([]byte, error) {
+				callCount++
+				if callCount == 1 {
+					return body1, nil
+				}
+				return body2, nil
+			},
+		}
+		list, err := ListPublicImages(ctx, c, "rhel-cloud")
+		require.NoError(t, err)
+		require.Len(t, list, 2)
+		// sortPublicImagesForProject sorts by name descending when ranks are equal, so img-2 before img-1
+		assert.Equal(t, "img-2", list[0].Name)
+		assert.Equal(t, "img-1", list[1].Name)
+		assert.Equal(t, 2, callCount)
 	})
 }
 
@@ -296,7 +351,7 @@ func Test_ListPublicImageResources(t *testing.T) {
 	t.Run("delegates to ListPublicImages and formats", func(t *testing.T) {
 		resp := imagesListResp{
 			Items: []*imageItem{
-				{Name: "ubuntu-24", Family: "ubuntu-24", SelfLink: "https://.../ubuntu-24"},
+				{Name: "win-2022", Family: "windows-2022", SelfLink: "https://.../win-2022"},
 			},
 		}
 		body, _ := json.Marshal(resp)
@@ -306,12 +361,12 @@ func Test_ListPublicImageResources(t *testing.T) {
 				return body, nil
 			},
 		}
-		resources, err := ListPublicImageResources(ctx, c, "ubuntu-os-cloud")
+		resources, err := ListPublicImageResources(ctx, c, "windows-cloud")
 		require.NoError(t, err)
 		require.Len(t, resources, 1)
 		assert.Equal(t, ResourceTypePublicImages, resources[0].Type)
-		assert.Equal(t, "ubuntu-24 (ubuntu-24)", resources[0].Name)
-		assert.Equal(t, "https://.../ubuntu-24", resources[0].ID)
+		assert.Equal(t, "win-2022 (windows-2022)", resources[0].Name)
+		assert.Equal(t, "https://.../win-2022", resources[0].ID)
 	})
 
 	t.Run("image without family uses name only", func(t *testing.T) {

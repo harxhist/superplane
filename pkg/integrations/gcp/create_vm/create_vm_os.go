@@ -11,6 +11,9 @@ import (
 	"github.com/superplanehq/superplane/pkg/core"
 )
 
+// ubuntuLTSFamilyOrder defines sort order for Ubuntu LTS families (modern first).
+var ubuntuLTSFamilyOrder = []string{"ubuntu-24", "ubuntu-22", "ubuntu-20"}
+
 const (
 	ResourceTypePublicImages      = "publicImages"
 	ResourceTypeCustomImages      = "customImages"
@@ -339,20 +342,31 @@ func CreateVMOSAndStorageConfigFields() []configuration.Field {
 	}
 }
 
+// publicImageProjects lists all GCP public image project IDs (all images shown to user).
 var publicImageProjects = []string{
-	"debian-cloud",
-	"ubuntu-os-cloud",
-	"windows-cloud",
-	"windows-sql-cloud",
 	"centos-cloud",
 	"cos-cloud",
+	"debian-cloud",
+	"deeplearning-platform-release",
+	"fedora-cloud",
 	"opensuse-cloud",
 	"oracle-linux-cloud",
-	"fedora-cloud",
+	"rhel-cloud",
+	"rhel-sap-cloud",
+	"rocky-linux-accelerator-cloud",
 	"rocky-linux-cloud",
+	"suse-byos-cloud",
+	"suse-cloud",
+	"suse-sap-cloud",
+	"ubuntu-os-accelerator-images",
+	"ubuntu-os-cloud",
+	"ubuntu-os-pro-cloud",
+	"windows-cloud",
+	"windows-sql-cloud",
 }
 
-const maxPublicImagesSingleProject = 100
+// maxPublicImagesPerPage is the GCP API page size when listing public images (max 500).
+const maxPublicImagesPerPage = 500
 
 func isPublicImageProject(project string) bool {
 	return slices.Contains(publicImageProjects, project)
@@ -393,16 +407,52 @@ func imageSelfLinkOrName(img Image) string {
 }
 
 var publicImageOSOptions = []configuration.FieldOption{
-	{Label: "Debian", Value: "debian-cloud"},
-	{Label: "Ubuntu", Value: "ubuntu-os-cloud"},
-	{Label: "Windows Server", Value: "windows-cloud"},
-	{Label: "SQL Server on Windows", Value: "windows-sql-cloud"},
 	{Label: "CentOS", Value: "centos-cloud"},
 	{Label: "Container-Optimized OS", Value: "cos-cloud"},
+	{Label: "Debian", Value: "debian-cloud"},
+	{Label: "Deep learning on Linux", Value: "deeplearning-platform-release"},
+	{Label: "Fedora", Value: "fedora-cloud"},
 	{Label: "openSUSE", Value: "opensuse-cloud"},
 	{Label: "Oracle Linux", Value: "oracle-linux-cloud"},
-	{Label: "Fedora", Value: "fedora-cloud"},
+	{Label: "Red Hat Linux", Value: "rhel-cloud"},
+	{Label: "Red Hat Linux for SAP", Value: "rhel-sap-cloud"},
 	{Label: "Rocky Linux", Value: "rocky-linux-cloud"},
+	{Label: "Rocky Linux Accelerator Optimized", Value: "rocky-linux-accelerator-cloud"},
+	{Label: "SQL Server on Windows Server", Value: "windows-sql-cloud"},
+	{Label: "SUSE Linux Enterprise BYOS", Value: "suse-byos-cloud"},
+	{Label: "SUSE Linux Enterprise Server", Value: "suse-cloud"},
+	{Label: "SUSE Linux Enterprise Server for SAP", Value: "suse-sap-cloud"},
+	{Label: "Ubuntu", Value: "ubuntu-os-cloud"},
+	{Label: "Ubuntu Accelerator Optimized", Value: "ubuntu-os-accelerator-images"},
+	{Label: "Ubuntu Pro", Value: "ubuntu-os-pro-cloud"},
+	{Label: "Windows Server", Value: "windows-cloud"},
+}
+
+// sortPublicImagesForProject sorts images so modern Ubuntu LTS appear first (ubuntu-os-cloud and related).
+func sortPublicImagesForProject(images []Image) {
+	slices.SortFunc(images, func(a, b Image) int {
+		rankA := ubuntuImageSortRank(a)
+		rankB := ubuntuImageSortRank(b)
+		if rankA != rankB {
+			return rankA - rankB
+		}
+		return strings.Compare(b.Name, a.Name)
+	})
+}
+
+func ubuntuImageSortRank(img Image) int {
+	family := strings.ToLower(img.Family)
+	name := strings.ToLower(img.Name)
+	source := family
+	if source == "" {
+		source = name
+	}
+	for i, prefix := range ubuntuLTSFamilyOrder {
+		if strings.Contains(source, prefix) {
+			return i
+		}
+	}
+	return len(ubuntuLTSFamilyOrder)
 }
 
 func ListPublicImages(ctx context.Context, c Client, project string) ([]Image, error) {
@@ -418,21 +468,29 @@ func ListPublicImages(ctx context.Context, c Client, project string) ([]Image, e
 		return v.([]Image), nil
 	}
 	path := fmt.Sprintf("projects/%s/global/images", project)
-	body, err := c.Get(ctx, withMaxResults(path, maxPublicImagesSingleProject, ""))
-	if err != nil {
-		return nil, fmt.Errorf("list public images for %s: %w", project, err)
-	}
-	var resp imagesListResp
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("parse images response: %w", err)
-	}
 	var all []Image
-	for _, it := range resp.Items {
-		if it == nil {
-			continue
+	var pageToken string
+	for {
+		body, err := c.Get(ctx, withMaxResults(path, maxPublicImagesPerPage, pageToken))
+		if err != nil {
+			return nil, fmt.Errorf("list public images for %s: %w", project, err)
 		}
-		all = append(all, imageItemToImage(it))
+		var resp imagesListResp
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("parse images response: %w", err)
+		}
+		for _, it := range resp.Items {
+			if it == nil {
+				continue
+			}
+			all = append(all, imageItemToImage(it))
+		}
+		pageToken = resp.NextPageToken
+		if pageToken == "" {
+			break
+		}
 	}
+	sortPublicImagesForProject(all)
 	osStorageCacheSet(cacheKey, all)
 	return all, nil
 }
