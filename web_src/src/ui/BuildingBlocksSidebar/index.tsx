@@ -23,6 +23,7 @@ import discordIcon from "@/assets/icons/integrations/discord.svg";
 import githubIcon from "@/assets/icons/integrations/github.svg";
 import gitlabIcon from "@/assets/icons/integrations/gitlab.svg";
 import jiraIcon from "@/assets/icons/integrations/jira.svg";
+import grafanaIcon from "@/assets/icons/integrations/grafana.svg";
 import openAiIcon from "@/assets/icons/integrations/openai.svg";
 import claudeIcon from "@/assets/icons/integrations/claude.svg";
 import gcpIcon from "@/assets/icons/integrations/gcp.svg";
@@ -32,6 +33,7 @@ import slackIcon from "@/assets/icons/integrations/slack.svg";
 import awsIcon from "@/assets/icons/integrations/aws.svg";
 import awsLambdaIcon from "@/assets/icons/integrations/aws.lambda.svg";
 import awsRoute53Icon from "@/assets/icons/integrations/aws.route53.svg";
+import awsEc2Icon from "@/assets/icons/integrations/aws.ec2.svg";
 import awsEcrIcon from "@/assets/icons/integrations/aws.ecr.svg";
 import awsEcsIcon from "@/assets/icons/integrations/aws.ecs.svg";
 import awsCodeArtifactIcon from "@/assets/icons/integrations/aws.codeartifact.svg";
@@ -44,6 +46,7 @@ import prometheusIcon from "@/assets/icons/integrations/prometheus.svg";
 import renderIcon from "@/assets/icons/integrations/render.svg";
 import dockerIcon from "@/assets/icons/integrations/docker.svg";
 import hetznerIcon from "@/assets/icons/integrations/hetzner.svg";
+import statuspageIcon from "@/assets/icons/integrations/statuspage.svg";
 
 export interface BuildingBlock {
   name: string;
@@ -413,6 +416,7 @@ function CategorySection({
     github: githubIcon,
     gitlab: gitlabIcon,
     hetzner: hetznerIcon,
+    grafana: grafanaIcon,
     jira: jiraIcon,
     openai: openAiIcon,
     "open-ai": openAiIcon,
@@ -426,7 +430,9 @@ function CategorySection({
     prometheus: prometheusIcon,
     render: renderIcon,
     dockerhub: dockerIcon,
+    statuspage: statuspageIcon,
     aws: {
+      ec2: awsEc2Icon,
       codeArtifact: awsIcon,
       cloudwatch: awsCloudwatchIcon,
       lambda: awsLambdaIcon,
@@ -497,6 +503,7 @@ function CategorySection({
             github: githubIcon,
             gitlab: gitlabIcon,
             hetzner: hetznerIcon,
+            grafana: grafanaIcon,
             openai: openAiIcon,
             "open-ai": openAiIcon,
             claude: claudeIcon,
@@ -509,10 +516,12 @@ function CategorySection({
             prometheus: prometheusIcon,
             render: renderIcon,
             dockerhub: dockerIcon,
+            statuspage: statuspageIcon,
             aws: {
               codeArtifact: awsCodeArtifactIcon,
               cloudwatch: awsCloudwatchIcon,
               ecr: awsEcrIcon,
+              ec2: awsEc2Icon,
               lambda: awsLambdaIcon,
               route53: awsRoute53Icon,
               ecs: awsEcsIcon,
