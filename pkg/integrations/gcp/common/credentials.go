@@ -41,24 +41,15 @@ func TokenSourceFromIntegration(ctx core.IntegrationContext, scopes ...string) (
 		return nil, fmt.Errorf("no GCP credentials found: add a service account key or use Workload Identity Federation and resync")
 	}
 
-	meta := ctx.GetMetadata()
-	if meta != nil {
-		var wif wifMetadata
-		_ = mapstructure.Decode(meta, &wif)
-		if expStr := strings.TrimSpace(wif.AccessTokenExpiresAt); expStr != "" {
-			exp, err := time.Parse(time.RFC3339, expStr)
-			if err == nil && time.Now().After(exp) {
-				return nil, fmt.Errorf("GCP access token expired; please resync the integration")
-			}
-		}
-	}
-
-	expiry := time.Time{}
-	if meta != nil {
+	var expiry time.Time
+	if meta := ctx.GetMetadata(); meta != nil {
 		var wif wifMetadata
 		_ = mapstructure.Decode(meta, &wif)
 		if expStr := strings.TrimSpace(wif.AccessTokenExpiresAt); expStr != "" {
 			if exp, err := time.Parse(time.RFC3339, expStr); err == nil {
+				if time.Now().After(exp) {
+					return nil, fmt.Errorf("GCP access token expired; please resync the integration")
+				}
 				expiry = exp
 			}
 		}
