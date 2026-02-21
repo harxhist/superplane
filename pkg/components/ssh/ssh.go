@@ -339,12 +339,6 @@ func (c *SSHCommand) Execute(ctx core.ExecutionContext) error {
 		return err
 	}
 
-	maxRetries := 0
-	intervalSeconds := 0
-	if spec.ConnectionRetry != nil {
-		maxRetries = spec.ConnectionRetry.Retries
-		intervalSeconds = spec.ConnectionRetry.IntervalSeconds
-	}
 	metadata := ExecutionMetadata{
 		Host:             spec.Host,
 		Port:             spec.Port,
@@ -354,8 +348,8 @@ func (c *SSHCommand) Execute(ctx core.ExecutionContext) error {
 		Timeout:          spec.Timeout,
 		ConnectionRetry:  spec.ConnectionRetry,
 		Attempt:          0,
-		MaxRetries:       maxRetries,
-		IntervalSeconds:  intervalSeconds,
+		MaxRetries:       spec.ConnectionRetry.Retries,
+		IntervalSeconds:  spec.ConnectionRetry.IntervalSeconds,
 		Authentication:   spec.Authentication,
 	}
 
