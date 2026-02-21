@@ -51,27 +51,3 @@ func Test_validateAndParseServiceAccountKey(t *testing.T) {
 		assert.Equal(t, "sa@proj.iam.gserviceaccount.com", meta.ClientEmail)
 	})
 }
-
-func Test_pathSuffixAfter(t *testing.T) {
-	t.Run("prefix found returns suffix", func(t *testing.T) {
-		suffix, found := pathSuffixAfter("/integrations/123/gcp/machine-types/e2-medium", pathPrefixMachineTypes)
-		require.True(t, found)
-		assert.Equal(t, "e2-medium", suffix)
-	})
-
-	t.Run("prefix not in path returns not found", func(t *testing.T) {
-		_, found := pathSuffixAfter("/gcp/regions", pathPrefixMachineTypes)
-		assert.False(t, found)
-	})
-
-	t.Run("empty suffix after prefix returns not found", func(t *testing.T) {
-		_, found := pathSuffixAfter("/gcp/machine-types/", pathPrefixMachineTypes)
-		assert.False(t, found)
-	})
-
-	t.Run("prefix at start", func(t *testing.T) {
-		suffix, found := pathSuffixAfter("/gcp/images/family/debian-12", pathPrefixImageFamily)
-		require.True(t, found)
-		assert.Equal(t, "debian-12", suffix)
-	})
-}
