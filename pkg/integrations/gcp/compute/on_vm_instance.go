@@ -26,8 +26,8 @@ var vmInsertMethodNames = []string{
 	instancesInsertMethodShort,
 }
 
-// CelFilter is the Eventarc Advanced enrollment filter for VM creation events.
-const CelFilter = `message.type == "google.cloud.audit.log.v1.written" && message.serviceName == "compute.googleapis.com" && (message.methodName == "v1.compute.instances.insert" || message.methodName == "beta.compute.instances.insert" || message.methodName == "compute.instances.insert")`
+// InstanceCelFilter is the Eventarc Advanced enrollment filter for VM instance creation events.
+const InstanceCelFilter = `message.type == "google.cloud.audit.log.v1.written" && message.serviceName == "compute.googleapis.com" && (message.methodName == "v1.compute.instances.insert" || message.methodName == "beta.compute.instances.insert" || message.methodName == "compute.instances.insert")`
 
 type auditLogOperation struct {
 	Last  bool `json:"last"`
@@ -62,61 +62,72 @@ type LogEntryDataPayload struct {
 	ReceiveTimestamp string             `json:"receiveTimestamp"`
 }
 
-const EmittedEventType = "gcp.compute.vmCreated"
+const EmittedEventType = "gcp.compute.vmInstance"
 
-type OnVMCreated struct{}
+type OnVMInstance struct{}
 
-type OnVMCreatedConfiguration struct {
+type OnVMInstanceConfiguration struct {
 	ProjectID string `json:"projectId" mapstructure:"projectId"`
 	Region    string `json:"region" mapstructure:"region"`
 }
 
-func (t *OnVMCreated) Name() string {
-	return "gcp.onVMCreated"
+func (t *OnVMInstance) Name() string {
+	return "gcp.compute.onVMInstance"
 }
 
-func (t *OnVMCreated) Label() string {
-	return "On VM Created"
+func (t *OnVMInstance) Label() string {
+	return "Compute • On VM Instance"
 }
 
-func (t *OnVMCreated) Description() string {
-	return "Emits when a new Compute Engine VM is created (provisioning succeeded). Trigger uses Eventarc Advanced to route audit log events to SuperPlane via an HTTPS pipeline."
+func (t *OnVMInstance) Description() string {
+	return "Listen to GCP Compute Engine VM instance lifecycle events"
 }
 
-func (t *OnVMCreated) Documentation() string {
-	return "The On VM Created trigger starts a workflow execution when a new Compute Engine VM is created and provisioning has succeeded.\n\n" +
-		"**Trigger behavior:** The trigger uses **Eventarc Advanced**: a shared message bus receives all Google Cloud audit log events, and an enrollment filters for VM creation events and delivers them to SuperPlane via an HTTPS pipeline with OIDC authentication.\n\n" +
-		"## Use Cases\n\n" +
-		"- **Post-provisioning automation**: Run configuration, monitoring, or security setup after a VM is created\n" +
-		"- **Inventory and compliance**: Record new VMs or trigger audits\n" +
-		"- **Notifications**: Notify teams or systems when new VMs appear in a project or zone\n\n" +
-		"## Automatic setup\n\n" +
-		"When you set **Project ID** (and optionally **Region**), SuperPlane automatically creates the Eventarc Advanced resources (message bus, Google API source, pipeline, and enrollment) needed to receive VM creation events. No manual setup is required.\n\n" +
-		"**Required GCP setup:** Enable the **Eventarc** API in your project and grant the integration's service account `roles/eventarc.developer` and `roles/iam.serviceAccountTokenCreator`.\n\n" +
-		"**Local testing:** Use ngrok (`ngrok http 8000`) and set `BASE_URL` and `WEBHOOKS_BASE_URL` to the ngrok HTTPS URL so GCP can reach the webhook.\n\n" +
-		"## Configuration\n\n" +
-		"- **Project ID**: Required. The GCP project where Eventarc resources are created and where VM create events are received.\n" +
-		"- **Region**: Optional. Default: us-central1. The region where Eventarc resources are provisioned.\n\n" +
-		"## Event Data\n\n" +
-		"Each event includes the full CloudEvents audit payload, including resourceName (e.g. projects/my-project/zones/us-central1-a/instances/my-vm), serviceName (compute.googleapis.com), methodName (v1.compute.instances.insert), and data (audit log entry)."
+func (t *OnVMInstance) Documentation() string {
+	return `The On VM Instance trigger starts a workflow execution when a Compute Engine VM instance lifecycle event occurs.
+
+**Trigger behavior:** The trigger uses **Eventarc Advanced**: a shared message bus receives all Google Cloud audit log events, and an enrollment filters for VM instance events and delivers them to SuperPlane via an HTTPS pipeline with OIDC authentication.
+
+## Use Cases
+
+- **Post-provisioning automation**: Run configuration, monitoring, or security setup after a VM is created
+- **Inventory and compliance**: Record new VMs or trigger audits
+- **Notifications**: Notify teams or systems when new VMs appear in a project or zone
+
+## Automatic setup
+
+When you set **Project ID** (and optionally **Region**), SuperPlane automatically creates the Eventarc Advanced resources (message bus, Google API source, pipeline, and enrollment) needed to receive VM instance events. No manual setup is required.
+
+**Required GCP setup:** Enable the **Eventarc** API in your project and grant the integration's service account ` + "`roles/eventarc.developer`" + ` and ` + "`roles/iam.serviceAccountTokenCreator`" + `.
+
+**Local testing:** Use ngrok (` + "`ngrok http 8000`" + `) and set ` + "`BASE_URL`" + ` and ` + "`WEBHOOKS_BASE_URL`" + ` to the ngrok HTTPS URL so GCP can reach the webhook.
+
+## Configuration
+
+- **Project ID**: Required. The GCP project where Eventarc resources are created and where VM instance events are received.
+- **Region**: Optional. Default: us-central1. The region where Eventarc resources are provisioned.
+
+## Event Data
+
+Each event includes the full CloudEvents audit payload, including resourceName (e.g. projects/my-project/zones/us-central1-a/instances/my-vm), serviceName (compute.googleapis.com), methodName (v1.compute.instances.insert), and data (audit log entry).`
 }
 
-func (t *OnVMCreated) Icon() string {
+func (t *OnVMInstance) Icon() string {
 	return "gcp"
 }
 
-func (t *OnVMCreated) Color() string {
+func (t *OnVMInstance) Color() string {
 	return "gray"
 }
 
-func (t *OnVMCreated) Configuration() []configuration.Field {
+func (t *OnVMInstance) Configuration() []configuration.Field {
 	return []configuration.Field{
 		{
 			Name:        "projectId",
 			Label:       "Project ID",
 			Type:        configuration.FieldTypeString,
 			Required:    true,
-			Description: "GCP project where Eventarc resources are created and where VM create events are received.",
+			Description: "GCP project where Eventarc resources are created and where VM instance events are received.",
 		},
 		{
 			Name:        "region",
@@ -129,7 +140,7 @@ func (t *OnVMCreated) Configuration() []configuration.Field {
 	}
 }
 
-func (t *OnVMCreated) ExampleData() map[string]any {
+func (t *OnVMInstance) ExampleData() map[string]any {
 	return map[string]any{
 		"type":         auditLogEventType,
 		"serviceName":  computeServiceName,
@@ -148,16 +159,16 @@ func (t *OnVMCreated) ExampleData() map[string]any {
 	}
 }
 
-type OnVMCreatedMetadata struct {
+type OnVMInstanceMetadata struct {
 	WebhookURL string `json:"webhookUrl" mapstructure:"webhookUrl"`
 }
 
-func (t *OnVMCreated) Setup(ctx core.TriggerContext) error {
+func (t *OnVMInstance) Setup(ctx core.TriggerContext) error {
 	if ctx.Integration == nil {
 		return fmt.Errorf("connect the GCP integration to this trigger to enable automatic event routing with Eventarc Advanced")
 	}
 
-	var config OnVMCreatedConfiguration
+	var config OnVMInstanceConfiguration
 	if err := mapstructure.Decode(ctx.Configuration, &config); err != nil {
 		return fmt.Errorf("failed to decode configuration: %w", err)
 	}
@@ -169,25 +180,25 @@ func (t *OnVMCreated) Setup(ctx core.TriggerContext) error {
 	webhookConfig := map[string]any{
 		"projectId": projectID,
 		"region":    strings.TrimSpace(config.Region),
-		"celFilter": CelFilter,
+		"celFilter": InstanceCelFilter,
 	}
 	if err := ctx.Integration.RequestWebhook(webhookConfig); err != nil {
-		return fmt.Errorf("failed to request webhook for On VM Created: %w", err)
+		return fmt.Errorf("failed to request webhook for On VM Instance: %w", err)
 	}
 
-	return ctx.Metadata.Set(OnVMCreatedMetadata{WebhookURL: "(registered automatically)"})
+	return ctx.Metadata.Set(OnVMInstanceMetadata{WebhookURL: "(registered automatically)"})
 }
 
-func (t *OnVMCreated) Actions() []core.Action {
+func (t *OnVMInstance) Actions() []core.Action {
 	return nil
 }
 
-func (t *OnVMCreated) HandleAction(ctx core.TriggerActionContext) (map[string]any, error) {
+func (t *OnVMInstance) HandleAction(ctx core.TriggerActionContext) (map[string]any, error) {
 	return nil, nil
 }
 
-func (t *OnVMCreated) HandleWebhook(ctx core.WebhookRequestContext) (int, error) {
-	config := OnVMCreatedConfiguration{}
+func (t *OnVMInstance) HandleWebhook(ctx core.WebhookRequestContext) (int, error) {
+	config := OnVMInstanceConfiguration{}
 	if err := mapstructure.Decode(ctx.Configuration, &config); err != nil {
 		return http.StatusInternalServerError, fmt.Errorf("failed to decode configuration: %w", err)
 	}
@@ -225,7 +236,7 @@ func (t *OnVMCreated) HandleWebhook(ctx core.WebhookRequestContext) (int, error)
 		projectID := strings.TrimSpace(config.ProjectID)
 		resourceProject := extractProjectFromResourceName(resourceName)
 		if resourceProject == "" || resourceProject != projectID {
-			ctx.Logger.Infof("Skipping VM created event for resource %s (project filter: %s)", resourceName, projectID)
+			ctx.Logger.Infof("Skipping VM instance event for resource %s (project filter: %s)", resourceName, projectID)
 			return http.StatusOK, nil
 		}
 	}
@@ -236,7 +247,7 @@ func (t *OnVMCreated) HandleWebhook(ctx core.WebhookRequestContext) (int, error)
 	return http.StatusOK, nil
 }
 
-func (t *OnVMCreated) Cleanup(ctx core.TriggerContext) error {
+func (t *OnVMInstance) Cleanup(ctx core.TriggerContext) error {
 	return nil
 }
 

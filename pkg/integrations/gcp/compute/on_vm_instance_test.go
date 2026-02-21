@@ -12,19 +12,19 @@ import (
 	"github.com/superplanehq/superplane/test/support/contexts"
 )
 
-func Test_OnVMCreated_Metadata(t *testing.T) {
-	trigger := &OnVMCreated{}
-	assert.Equal(t, "gcp.onVMCreated", trigger.Name())
-	assert.Equal(t, "On VM Created", trigger.Label())
-	assert.Equal(t, "Emits when a new Compute Engine VM is created (provisioning succeeded). Trigger uses Eventarc Advanced to route audit log events to SuperPlane via an HTTPS pipeline.", trigger.Description())
+func Test_OnVMInstance_Metadata(t *testing.T) {
+	trigger := &OnVMInstance{}
+	assert.Equal(t, "gcp.compute.onVMInstance", trigger.Name())
+	assert.Equal(t, "Compute • On VM Instance", trigger.Label())
+	assert.Equal(t, "Listen to GCP Compute Engine VM instance lifecycle events", trigger.Description())
 	assert.NotEmpty(t, trigger.Documentation())
 	assert.Equal(t, "gcp", trigger.Icon())
 	assert.Equal(t, "gray", trigger.Color())
 	assert.Nil(t, trigger.Actions())
 }
 
-func Test_OnVMCreated_Configuration(t *testing.T) {
-	trigger := &OnVMCreated{}
+func Test_OnVMInstance_Configuration(t *testing.T) {
+	trigger := &OnVMInstance{}
 	fields := trigger.Configuration()
 	require.Len(t, fields, 2)
 	assert.Equal(t, "projectId", fields[0].Name)
@@ -35,8 +35,8 @@ func Test_OnVMCreated_Configuration(t *testing.T) {
 	assert.Equal(t, "us-central1", fields[1].Default)
 }
 
-func Test_OnVMCreated_ExampleData(t *testing.T) {
-	trigger := &OnVMCreated{}
+func Test_OnVMInstance_ExampleData(t *testing.T) {
+	trigger := &OnVMInstance{}
 	data := trigger.ExampleData()
 	assert.Equal(t, auditLogEventType, data["type"])
 	assert.Equal(t, computeServiceName, data["serviceName"])
@@ -44,12 +44,12 @@ func Test_OnVMCreated_ExampleData(t *testing.T) {
 	assert.Equal(t, "projects/my-project/zones/us-central1-a/instances/my-vm", data["resourceName"])
 }
 
-func Test_OnVMCreated_CelFilter(t *testing.T) {
-	assert.Contains(t, CelFilter, "google.cloud.audit.log.v1.written")
-	assert.Contains(t, CelFilter, "compute.googleapis.com")
-	assert.Contains(t, CelFilter, "v1.compute.instances.insert")
-	assert.Contains(t, CelFilter, "beta.compute.instances.insert")
-	assert.Contains(t, CelFilter, "compute.instances.insert")
+func Test_OnVMInstance_InstanceCelFilter(t *testing.T) {
+	assert.Contains(t, InstanceCelFilter, "google.cloud.audit.log.v1.written")
+	assert.Contains(t, InstanceCelFilter, "compute.googleapis.com")
+	assert.Contains(t, InstanceCelFilter, "v1.compute.instances.insert")
+	assert.Contains(t, InstanceCelFilter, "beta.compute.instances.insert")
+	assert.Contains(t, InstanceCelFilter, "compute.instances.insert")
 }
 
 func Test_isCompletionEvent(t *testing.T) {
@@ -89,8 +89,8 @@ func Test_normalizedFromEnvelope(t *testing.T) {
 	assert.True(t, op.Last)
 }
 
-func Test_OnVMCreated_HandleWebhook(t *testing.T) {
-	trigger := &OnVMCreated{}
+func Test_OnVMInstance_HandleWebhook(t *testing.T) {
+	trigger := &OnVMInstance{}
 	logger := logrus.NewEntry(logrus.New())
 
 	t.Run("invalid JSON body returns 400", func(t *testing.T) {

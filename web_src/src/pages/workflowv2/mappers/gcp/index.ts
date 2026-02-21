@@ -1,14 +1,14 @@
 import { ComponentBaseMapper, CustomFieldRenderer, EventStateRegistry, TriggerRenderer } from "../types";
 import { baseMapper } from "./base";
 import { buildActionStateRegistry } from "../utils";
-import { onVMCreatedTriggerRenderer } from "./on_vm_created";
+import { onVMInstanceTriggerRenderer } from "./on_vm_instance";
 
 export const componentMappers: Record<string, ComponentBaseMapper> = {
   createVM: baseMapper,
 };
 
 export const triggerRenderers: Record<string, TriggerRenderer> = {
-  onVMCreated: onVMCreatedTriggerRenderer,
+  onVMInstance: onVMInstanceTriggerRenderer,
 };
 
 export const eventStateRegistry: Record<string, EventStateRegistry> = {

@@ -5,11 +5,11 @@ import { flattenObject } from "@/lib/utils";
 import { formatTimeAgo } from "@/utils/date";
 import gcpIcon from "@/assets/icons/integrations/gcp.svg";
 
-export const onVMCreatedTriggerRenderer: TriggerRenderer = {
+export const onVMInstanceTriggerRenderer: TriggerRenderer = {
   getTitleAndSubtitle: (context: TriggerEventContext): { title: string; subtitle: string } => {
     const data = context.event?.data as { resourceName?: string } | undefined;
     const resourceName = data?.resourceName ?? "";
-    const title = "VM created";
+    const title = "VM instance event";
     const subtitle = resourceName || "";
     return { title, subtitle };
   },
@@ -21,7 +21,7 @@ export const onVMCreatedTriggerRenderer: TriggerRenderer = {
   getTriggerProps: (context: TriggerRendererContext): TriggerProps => {
     const { node, definition, lastEvent } = context;
     return {
-      title: node.name || definition.label || "On VM Created",
+      title: node.name || definition.label || "On VM Instance",
       iconSrc: gcpIcon,
       iconSlug: definition.icon || "cloud",
       iconColor: getColorClass("black"),
@@ -29,7 +29,7 @@ export const onVMCreatedTriggerRenderer: TriggerRenderer = {
       metadata: [],
       ...(lastEvent && {
         lastEventData: {
-          title: "VM created",
+          title: "VM instance event",
           subtitle:
             (lastEvent.data as { resourceName?: string })?.resourceName ?? formatTimeAgo(new Date(lastEvent.createdAt)),
           receivedAt: new Date(lastEvent.createdAt),

@@ -143,7 +143,7 @@ func (g *GCP) Components() []core.Component {
 
 func (g *GCP) Triggers() []core.Trigger {
 	return []core.Trigger{
-		&compute.OnVMCreated{},
+		&compute.OnVMInstance{},
 	}
 }
 
