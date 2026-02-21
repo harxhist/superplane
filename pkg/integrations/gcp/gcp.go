@@ -272,15 +272,14 @@ func validateAndParseServiceAccountKey(keyJSON []byte) (gcpcommon.Metadata, erro
 		return gcpcommon.Metadata{}, fmt.Errorf("invalid JSON: %w", err)
 	}
 
-	projectID := ""
-	clientEmail := ""
+	var projectID, clientEmail string
 
-	if projectID, ok := raw["project_id"].(string); ok {
-		projectID = strings.TrimSpace(projectID)
+	if v, ok := raw["project_id"].(string); ok {
+		projectID = strings.TrimSpace(v)
 	}
 
-	if clientEmail, ok := raw["client_email"].(string); ok {
-		clientEmail = strings.TrimSpace(clientEmail)
+	if v, ok := raw["client_email"].(string); ok {
+		clientEmail = strings.TrimSpace(v)
 	}
 
 	if projectID == "" {

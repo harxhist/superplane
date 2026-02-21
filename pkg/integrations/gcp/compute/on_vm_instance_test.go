@@ -128,7 +128,7 @@ func Test_OnVMInstance_OnIntegrationMessage(t *testing.T) {
 }
 
 func Test_sanitizeSinkID(t *testing.T) {
-	assert.Equal(t, "abc123", sanitizeSinkID("ABC-123"))
+	assert.Equal(t, "abc-123", sanitizeSinkID("ABC-123"))
 	assert.Equal(t, "abc-def", sanitizeSinkID("abc-def"))
 	assert.Equal(t, "a", sanitizeSinkID("a!@#$%^&*()"))
 
