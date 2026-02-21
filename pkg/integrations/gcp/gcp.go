@@ -56,23 +56,21 @@ func (g *GCP) Description() string {
 func (g *GCP) Instructions() string {
 	return `## Connection method
 
-Choose **Service Account Key** (paste JSON) or **Workload Identity Federation** (keyless, using this SuperPlane instance as OIDC issuer).
-
 ### Service Account Key
 
-1. In [Google Cloud Console](https://console.cloud.google.com/) → **IAM & Admin** → **Service Accounts**
-2. Open a service account → **Keys** → **Add Key** → **Create new key** → **JSON**
-3. Download the JSON and paste its **entire contents** below.
+1. Go to [IAM & Admin → Service Accounts](https://console.cloud.google.com/iam-admin/serviceaccounts) in the Google Cloud Console.
+2. Select a service account → **Keys** → **Add Key** → **JSON**.
+3. Paste the downloaded JSON below.
 
 ### Workload Identity Federation (keyless)
 
-1. Create a [Workload Identity Pool](https://cloud.google.com/iam/docs/workload-identity-federation) with an **OIDC provider** in GCP.
-2. Set **Issuer** to **this SuperPlane instance URL** (must serve /.well-known/openid-configuration and /.well-known/jwks.json over HTTPS and be reachable by Google; otherwise use Service Account Key).
-3. Set **Audience** to the pool provider resource name.
-4. Configure [attribute mapping](https://cloud.google.com/iam/docs/workload-identity-federation-with-other-providers#mapping) so the federated identity can impersonate a GCP service account with the roles your workflows need.
-5. Below, choose **Workload Identity Federation** and enter the **pool provider resource name** and **Project ID**.
+1. Create a [Workload Identity Pool](https://cloud.google.com/iam/docs/workload-identity-federation) with an OIDC provider.
+2. Set the **Issuer URL** to this SuperPlane instance's URL.
+3. Set the **Audience** to the pool provider resource name.
+4. Grant the federated identity permission to [impersonate a service account](https://cloud.google.com/iam/docs/workload-identity-federation-with-other-providers#mapping) with the roles your workflows need.
+5. Enter the **pool provider resource name** and **Project ID** below.
 
-> **Note**: Use a dedicated service account (or WIF mapping) with only the IAM roles your workflows need.`
+> Grant only the IAM roles your workflows need.`
 }
 
 func (g *GCP) Configuration() []configuration.Field {
