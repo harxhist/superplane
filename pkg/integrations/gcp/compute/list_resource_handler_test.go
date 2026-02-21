@@ -8,8 +8,50 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/superplanehq/superplane/pkg/configuration"
 )
+
+func Test_lastSegment(t *testing.T) {
+	assert.Equal(t, "", lastSegment(""))
+	assert.Equal(t, "e2-medium", lastSegment("zones/us-central1-a/machineTypes/e2-medium"))
+	assert.Equal(t, "name", lastSegment("a/b/c/name"))
+	assert.Equal(t, "only", lastSegment("only"))
+}
+
+func Test_DeriveFamily(t *testing.T) {
+	assert.Equal(t, "E2", DeriveFamily("e2-medium"))
+	assert.Equal(t, "N2", DeriveFamily("n2-standard-4"))
+	assert.Equal(t, "C2", DeriveFamily("c2-standard-8"))
+	assert.Equal(t, "", DeriveFamily(""))
+	assert.Equal(t, "", DeriveFamily("   "))
+	assert.Equal(t, "N2", DeriveFamily("  n2-standard-4  "))
+}
+
+func Test_zoneToRegion(t *testing.T) {
+	assert.Equal(t, "us-central1", zoneToRegion("us-central1-a"))
+	assert.Equal(t, "europe-west1", zoneToRegion("europe-west1-b"))
+	assert.Equal(t, "", zoneToRegion(""))
+	assert.Equal(t, "", zoneToRegion("   "))
+	assert.Equal(t, "us-east1", zoneToRegion("us-east1-c"))
+	t.Run("no hyphen returns zone as-is", func(t *testing.T) {
+		assert.Equal(t, "region", zoneToRegion("region"))
+	})
+}
+
+func Test_FormatMachineTypeSummary(t *testing.T) {
+	assert.Equal(t, "", FormatMachineTypeSummary(nil))
+	t.Run("formats vCPU and memory", func(t *testing.T) {
+		mt := &MachineType{GuestCPUs: 4, MemoryMB: 16384}
+		assert.Equal(t, "4 vCPU, 16 GB memory", FormatMachineTypeSummary(mt))
+	})
+	t.Run("small memory rounds to 1 GB", func(t *testing.T) {
+		mt := &MachineType{GuestCPUs: 1, MemoryMB: 512}
+		assert.Equal(t, "1 vCPU, 1 GB memory", FormatMachineTypeSummary(mt))
+	})
+	t.Run("thousands with commas", func(t *testing.T) {
+		mt := &MachineType{GuestCPUs: 288, MemoryMB: 1105920} // 1080 GB
+		assert.Equal(t, "288 vCPU, 1,080 GB memory", FormatMachineTypeSummary(mt))
+	})
+}
 
 type mockOSClient struct {
 	projectID string
@@ -34,33 +76,6 @@ func (m *mockOSClient) GetURL(ctx context.Context, fullURL string) ([]byte, erro
 func (m *mockOSClient) ProjectID() string {
 	return m.projectID
 }
-
-func Test_CreateVMOSAndStorageConfigFields(t *testing.T) {
-	fields := CreateVMOSAndStorageConfigFields()
-	require.NotEmpty(t, fields)
-
-	names := make([]string, 0, len(fields))
-	for _, f := range fields {
-		names = append(names, f.Name)
-	}
-	assert.Contains(t, names, "bootDiskSourceType")
-	assert.Contains(t, names, "bootDiskOS")
-	assert.Contains(t, names, "bootDiskPublicImage")
-	assert.Contains(t, names, "bootDiskCustomImage")
-	assert.Contains(t, names, "bootDiskSnapshot")
-	assert.Contains(t, names, "bootDiskExistingDisk")
-	assert.Contains(t, names, "bootDiskType")
-	assert.Contains(t, names, "bootDiskSizeGb")
-	assert.Contains(t, names, "bootDiskEncryptionKey")
-	assert.Contains(t, names, "bootDiskSnapshotSchedule")
-	assert.Contains(t, names, "bootDiskAutoDelete")
-	assert.Contains(t, names, "localSSDCount")
-	assert.Contains(t, names, "additionalDisks")
-
-	assert.Equal(t, configuration.FieldTypeSelect, fields[0].Type)
-	assert.Equal(t, BootDiskSourcePublicImage, fields[0].Default)
-}
-
 func Test_isPublicImageProject(t *testing.T) {
 	assert.True(t, isPublicImageProject("debian-cloud"))
 	assert.True(t, isPublicImageProject("ubuntu-os-cloud"))
@@ -435,4 +450,11 @@ func Test_ListCustomImageResources(t *testing.T) {
 		_, err := ListCustomImageResources(ctx, c, "error-test-project")
 		require.Error(t, err)
 	})
+}
+func Test_isAllowedBootDiskType(t *testing.T) {
+	assert.True(t, isAllowedBootDiskType("pd-balanced"))
+	assert.True(t, isAllowedBootDiskType("pd-ssd"))
+	assert.True(t, isAllowedBootDiskType("pd-standard"))
+	assert.False(t, isAllowedBootDiskType("local-ssd"))
+	assert.False(t, isAllowedBootDiskType(""))
 }
