@@ -147,15 +147,14 @@ func (g *GCP) Sync(ctx core.SyncContext) error {
 		return fmt.Errorf("failed to decode configuration: %w", err)
 	}
 
-	connectionMethod := strings.TrimSpace(config.ConnectionMethod)
-	if connectionMethod == "" {
-		connectionMethod = ConnectionMethodServiceAccountKey
-	}
-
-	if connectionMethod == ConnectionMethodWIF {
+	switch strings.TrimSpace(config.ConnectionMethod) {
+	case ConnectionMethodServiceAccountKey:
+		return g.syncServiceAccountKey(ctx, config)
+	case ConnectionMethodWIF:
 		return g.syncWIF(ctx, config)
+	default:
+		return fmt.Errorf("unknown connection method: %s", config.ConnectionMethod)
 	}
-	return g.syncServiceAccountKey(ctx, config)
 }
 
 func (g *GCP) syncWIF(ctx core.SyncContext, config Configuration) error {
@@ -219,6 +218,7 @@ func (g *GCP) syncServiceAccountKey(ctx core.SyncContext, config Configuration) 
 	if err != nil {
 		return fmt.Errorf("failed to read service account key: %w", err)
 	}
+
 	if len(keyJSON) == 0 {
 		return fmt.Errorf("service account key is required")
 	}
@@ -254,18 +254,28 @@ func validateAndParseServiceAccountKey(keyJSON []byte) (gcpcommon.Metadata, erro
 		return gcpcommon.Metadata{}, fmt.Errorf("invalid JSON: %w", err)
 	}
 
-	for _, k := range gcpcommon.RequiredJSONKeys {
-		if _, ok := raw[k]; !ok {
-			return gcpcommon.Metadata{}, fmt.Errorf("missing required field %q in service account key", k)
-		}
+	projectID := ""
+	clientEmail := ""
+
+	if projectID, ok := raw["project_id"].(string); ok {
+		projectID = strings.TrimSpace(projectID)
 	}
 
-	projectID, _ := raw["project_id"].(string)
-	clientEmail, _ := raw["client_email"].(string)
+	if clientEmail, ok := raw["client_email"].(string); ok {
+		clientEmail = strings.TrimSpace(clientEmail)
+	}
+
+	if projectID == "" {
+		return gcpcommon.Metadata{}, fmt.Errorf("missing required field project_id in service account key")
+	}
+
+	if clientEmail == "" {
+		return gcpcommon.Metadata{}, fmt.Errorf("missing required field client_email in service account key")
+	}
 
 	return gcpcommon.Metadata{
-		ProjectID:   strings.TrimSpace(projectID),
-		ClientEmail: strings.TrimSpace(clientEmail),
+		ProjectID:   projectID,
+		ClientEmail: clientEmail,
 	}, nil
 }
 
@@ -281,10 +291,6 @@ func (g *GCP) HandleAction(ctx core.IntegrationActionContext) error {
 	return nil
 }
 
-func trimmedParam(params map[string]string, key string) string {
-	return strings.TrimSpace(params[key])
-}
-
 func (g *GCP) ListResources(resourceType string, ctx core.ListResourcesContext) ([]core.IntegrationResource, error) {
 	client, err := gcpcommon.NewClient(ctx.HTTP, ctx.Integration)
 	if err != nil {
@@ -292,70 +298,37 @@ func (g *GCP) ListResources(resourceType string, ctx core.ListResourcesContext) 
 	}
 	reqCtx := context.Background()
 
+	p := ctx.Parameters
+
 	switch resourceType {
 	case compute.ResourceTypeRegion:
 		return compute.ListRegionResources(reqCtx, client)
 	case compute.ResourceTypeZone:
-		return compute.ListZoneResources(reqCtx, client, ctx.Parameters["region"])
+		return compute.ListZoneResources(reqCtx, client, p["region"])
 	case compute.ResourceTypeMachineFamily:
-		zone := trimmedParam(ctx.Parameters, "zone")
-		if zone == "" {
-			return []core.IntegrationResource{}, nil
-		}
-		return compute.ListMachineFamilyResources(reqCtx, client, zone)
+		return compute.ListMachineFamilyResources(reqCtx, client, p["zone"])
 	case compute.ResourceTypeMachineType:
-		zone := trimmedParam(ctx.Parameters, "zone")
-		if zone == "" {
-			return []core.IntegrationResource{}, nil
-		}
-		machineFamily := trimmedParam(ctx.Parameters, "machineFamily")
-		return compute.ListMachineTypeResources(reqCtx, client, zone, machineFamily)
+		return compute.ListMachineTypeResources(reqCtx, client, p["zone"], p["machineFamily"])
 	case compute.ResourceTypePublicImages:
-		return compute.ListPublicImageResources(reqCtx, client, ctx.Parameters["project"])
+		return compute.ListPublicImageResources(reqCtx, client, p["project"])
 	case compute.ResourceTypeCustomImages:
-		return compute.ListCustomImageResources(reqCtx, client, ctx.Parameters["project"])
+		return compute.ListCustomImageResources(reqCtx, client, p["project"])
 	case compute.ResourceTypeSnapshots:
-		return compute.ListSnapshotResources(reqCtx, client, ctx.Parameters["project"])
+		return compute.ListSnapshotResources(reqCtx, client, p["project"])
 	case compute.ResourceTypeDisks:
-		zone := trimmedParam(ctx.Parameters, "zone")
-		if zone == "" {
-			return []core.IntegrationResource{}, nil
-		}
-		return compute.ListDiskResources(reqCtx, client, ctx.Parameters["project"], zone)
+		return compute.ListDiskResources(reqCtx, client, p["project"], p["zone"])
 	case compute.ResourceTypeDiskTypes:
-		zone := trimmedParam(ctx.Parameters, "zone")
-		if zone == "" {
-			return []core.IntegrationResource{}, nil
-		}
-		bootDiskOnly := ctx.Parameters["bootDiskOnly"] == "true"
-		return compute.ListDiskTypeResources(reqCtx, client, ctx.Parameters["project"], zone, bootDiskOnly)
+		return compute.ListDiskTypeResources(reqCtx, client, p["project"], p["zone"], p["bootDiskOnly"] == "true")
 	case compute.ResourceTypeSnapshotSchedules:
-		region := trimmedParam(ctx.Parameters, "region")
-		if region == "" {
-			return []core.IntegrationResource{}, nil
-		}
-		return compute.ListSnapshotScheduleResources(reqCtx, client, ctx.Parameters["project"], region)
+		return compute.ListSnapshotScheduleResources(reqCtx, client, p["project"], p["region"])
 	case compute.ResourceTypeNetwork:
-		return compute.ListNetworkResources(reqCtx, client, ctx.Parameters["project"])
+		return compute.ListNetworkResources(reqCtx, client, p["project"])
 	case compute.ResourceTypeSubnetwork:
-		region := trimmedParam(ctx.Parameters, "region")
-		if region == "" {
-			return []core.IntegrationResource{}, nil
-		}
-		return compute.ListSubnetworkResources(reqCtx, client, ctx.Parameters["project"], region)
+		return compute.ListSubnetworkResources(reqCtx, client, p["project"], p["region"])
 	case compute.ResourceTypeAddress:
-		region := trimmedParam(ctx.Parameters, "region")
-		if region == "" {
-			return []core.IntegrationResource{}, nil
-		}
-		return compute.ListAddressResources(reqCtx, client, ctx.Parameters["project"], region)
+		return compute.ListAddressResources(reqCtx, client, p["project"], p["region"])
 	case compute.ResourceTypeFirewall:
-		resources, err := compute.ListFirewallResources(reqCtx, client, ctx.Parameters["project"])
-		if err != nil {
-			ctx.Logger.WithError(err).WithField("project", ctx.Parameters["project"]).Error("list firewall resources failed; returning empty list")
-			return []core.IntegrationResource{}, nil
-		}
-		return resources, nil
+		return compute.ListFirewallResources(reqCtx, client, p["project"])
 	default:
 		return nil, nil
 	}

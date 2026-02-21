@@ -439,6 +439,9 @@ func ListZoneResources(ctx context.Context, c Client, region string) ([]core.Int
 }
 
 func ListMachineFamilyResources(ctx context.Context, c Client, zone string) ([]core.IntegrationResource, error) {
+	if strings.TrimSpace(zone) == "" {
+		return []core.IntegrationResource{}, nil
+	}
 	list, err := ListMachineFamilies(ctx, c, zone)
 	if err != nil {
 		return nil, err
@@ -451,6 +454,9 @@ func ListMachineFamilyResources(ctx context.Context, c Client, zone string) ([]c
 }
 
 func ListMachineTypeResources(ctx context.Context, c Client, zone, machineFamily string) ([]core.IntegrationResource, error) {
+	if strings.TrimSpace(zone) == "" {
+		return []core.IntegrationResource{}, nil
+	}
 	list, err := ListMachineTypes(ctx, c, zone)
 	if err != nil {
 		return nil, err
@@ -985,6 +991,9 @@ func ListSnapshotResources(ctx context.Context, c Client, project string) ([]cor
 }
 
 func ListDiskResources(ctx context.Context, c Client, project, zone string) ([]core.IntegrationResource, error) {
+	if strings.TrimSpace(zone) == "" {
+		return []core.IntegrationResource{}, nil
+	}
 	list, err := ListDisks(ctx, c, project, zone)
 	if err != nil {
 		return nil, err
@@ -997,6 +1006,9 @@ func ListDiskResources(ctx context.Context, c Client, project, zone string) ([]c
 }
 
 func ListDiskTypeResources(ctx context.Context, c Client, project, zone string, bootDiskOnly bool) ([]core.IntegrationResource, error) {
+	if strings.TrimSpace(zone) == "" {
+		return []core.IntegrationResource{}, nil
+	}
 	list, err := ListDiskTypes(ctx, c, project, zone)
 	if err != nil {
 		return nil, err
@@ -1016,6 +1028,9 @@ func ListDiskTypeResources(ctx context.Context, c Client, project, zone string, 
 }
 
 func ListSnapshotScheduleResources(ctx context.Context, c Client, project, region string) ([]core.IntegrationResource, error) {
+	if strings.TrimSpace(region) == "" {
+		return []core.IntegrationResource{}, nil
+	}
 	list, err := ListSnapshotSchedules(ctx, c, project, region)
 	if err != nil {
 		return nil, err
@@ -1245,6 +1260,9 @@ func ListNetworkResources(ctx context.Context, c Client, project string) ([]core
 }
 
 func ListSubnetworkResources(ctx context.Context, c Client, project, region string) ([]core.IntegrationResource, error) {
+	if strings.TrimSpace(region) == "" {
+		return []core.IntegrationResource{}, nil
+	}
 	list, err := ListSubnetworks(ctx, c, project, region)
 	if err != nil {
 		return nil, err
@@ -1261,6 +1279,9 @@ func ListSubnetworkResources(ctx context.Context, c Client, project, region stri
 }
 
 func ListAddressResources(ctx context.Context, c Client, project, region string) ([]core.IntegrationResource, error) {
+	if strings.TrimSpace(region) == "" {
+		return []core.IntegrationResource{}, nil
+	}
 	list, err := ListAddresses(ctx, c, project, region)
 	if err != nil {
 		return nil, err
