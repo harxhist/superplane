@@ -19,7 +19,6 @@ func Test_CreateVMConfiguration(t *testing.T) {
 		names = append(names, f.Name)
 	}
 	assert.Contains(t, names, "instanceName")
-	assert.Contains(t, names, "project")
 	assert.Contains(t, names, "region")
 	assert.Contains(t, names, "zone")
 	assert.Contains(t, names, "machineType")

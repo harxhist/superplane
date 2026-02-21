@@ -152,6 +152,7 @@ import {
   triggerRenderers as gcpTriggerRenderers,
   eventStateRegistry as gcpEventStateRegistry,
 } from "./gcp";
+import {
   componentMappers as servicenowComponentMappers,
   customFieldRenderers as servicenowCustomFieldRenderers,
   triggerRenderers as servicenowTriggerRenderers,

@@ -1245,10 +1245,7 @@ func InstancePayloadFromGetResponse(body []byte, zone string) (map[string]any, e
 }
 
 func CreateVMAndWait(ctx context.Context, client Client, config CreateVMConfig) (map[string]any, error) {
-	project := strings.TrimSpace(config.Project)
-	if project == "" {
-		project = client.ProjectID()
-	}
+	project := client.ProjectID()
 	zone := strings.TrimSpace(config.Zone)
 	region := strings.TrimSpace(config.Region)
 	if zone == "" {
@@ -1387,14 +1384,6 @@ func (c *CreateVM) Configuration() []configuration.Field {
 			Placeholder: "e.g. my-vm-01",
 		},
 		{
-			Name:        "project",
-			Label:       "Project",
-			Type:        configuration.FieldTypeString,
-			Required:    false,
-			Description: "GCP project ID for the VM. Leave empty to use the integration's project.",
-			Placeholder: "Leave empty to use integration project",
-		},
-		{
 			Name:        "region",
 			Label:       "Region",
 			Type:        configuration.FieldTypeIntegrationResource,
@@ -1529,7 +1518,6 @@ func (c *CreateVM) Configuration() []configuration.Field {
 				Resource: &configuration.ResourceTypeOptions{
 					Type: ResourceTypeCustomImages,
 					Parameters: []configuration.ParameterRef{
-						{Name: "project", ValueFrom: &configuration.ParameterValueFrom{Field: "project"}},
 					},
 				},
 			},
@@ -1547,7 +1535,6 @@ func (c *CreateVM) Configuration() []configuration.Field {
 				Resource: &configuration.ResourceTypeOptions{
 					Type: ResourceTypeSnapshots,
 					Parameters: []configuration.ParameterRef{
-						{Name: "project", ValueFrom: &configuration.ParameterValueFrom{Field: "project"}},
 					},
 				},
 			},
@@ -1565,7 +1552,6 @@ func (c *CreateVM) Configuration() []configuration.Field {
 				Resource: &configuration.ResourceTypeOptions{
 					Type: ResourceTypeDisks,
 					Parameters: []configuration.ParameterRef{
-						{Name: "project", ValueFrom: &configuration.ParameterValueFrom{Field: "project"}},
 						{Name: "zone", ValueFrom: &configuration.ParameterValueFrom{Field: "zone"}},
 					},
 				},
@@ -1584,7 +1570,6 @@ func (c *CreateVM) Configuration() []configuration.Field {
 				Resource: &configuration.ResourceTypeOptions{
 					Type: ResourceTypeDiskTypes,
 					Parameters: []configuration.ParameterRef{
-						{Name: "project", ValueFrom: &configuration.ParameterValueFrom{Field: "project"}},
 						{Name: "zone", ValueFrom: &configuration.ParameterValueFrom{Field: "zone"}},
 						{Name: "bootDiskOnly", Value: strPtr("true")},
 					},
@@ -1629,7 +1614,6 @@ func (c *CreateVM) Configuration() []configuration.Field {
 				Resource: &configuration.ResourceTypeOptions{
 					Type: ResourceTypeSnapshotSchedules,
 					Parameters: []configuration.ParameterRef{
-						{Name: "project", ValueFrom: &configuration.ParameterValueFrom{Field: "project"}},
 						{Name: "region", ValueFrom: &configuration.ParameterValueFrom{Field: "region"}},
 					},
 				},
@@ -1741,7 +1725,6 @@ func (c *CreateVM) Configuration() []configuration.Field {
 									Resource: &configuration.ResourceTypeOptions{
 										Type: ResourceTypeDisks,
 										Parameters: []configuration.ParameterRef{
-											{Name: "project", ValueFrom: &configuration.ParameterValueFrom{Field: "project"}},
 											{Name: "zone", ValueFrom: &configuration.ParameterValueFrom{Field: "zone"}},
 										},
 									},
@@ -1874,7 +1857,6 @@ func (c *CreateVM) Configuration() []configuration.Field {
 				Resource: &configuration.ResourceTypeOptions{
 					Type: ResourceTypeNetwork,
 					Parameters: []configuration.ParameterRef{
-						{Name: "project", ValueFrom: &configuration.ParameterValueFrom{Field: "project"}},
 					},
 				},
 			},
@@ -1889,7 +1871,6 @@ func (c *CreateVM) Configuration() []configuration.Field {
 				Resource: &configuration.ResourceTypeOptions{
 					Type: ResourceTypeSubnetwork,
 					Parameters: []configuration.ParameterRef{
-						{Name: "project", ValueFrom: &configuration.ParameterValueFrom{Field: "project"}},
 						{Name: "region", ValueFrom: &configuration.ParameterValueFrom{Field: "region"}},
 					},
 				},
@@ -1964,7 +1945,6 @@ func (c *CreateVM) Configuration() []configuration.Field {
 				Resource: &configuration.ResourceTypeOptions{
 					Type: ResourceTypeAddress,
 					Parameters: []configuration.ParameterRef{
-						{Name: "project", ValueFrom: &configuration.ParameterValueFrom{Field: "project"}},
 						{Name: "region", ValueFrom: &configuration.ParameterValueFrom{Field: "region"}},
 					},
 				},
@@ -2366,7 +2346,6 @@ func validateCreateVMConfig(config CreateVMConfig) (invalidMessage string, ok bo
 
 type CreateVMConfig struct {
 	InstanceName           string                  `mapstructure:"instanceName"`
-	Project                string                  `mapstructure:"project"`
 	Region                 string                  `mapstructure:"region"`
 	Zone                   string                  `mapstructure:"zone"`
 	MachineFamily          string                  `mapstructure:"machineFamily"`
