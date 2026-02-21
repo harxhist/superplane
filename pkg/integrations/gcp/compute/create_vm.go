@@ -1516,9 +1516,8 @@ func (c *CreateVM) Configuration() []configuration.Field {
 			Description: "Select a custom image from your project.",
 			TypeOptions: &configuration.TypeOptions{
 				Resource: &configuration.ResourceTypeOptions{
-					Type: ResourceTypeCustomImages,
-					Parameters: []configuration.ParameterRef{
-					},
+					Type:       ResourceTypeCustomImages,
+					Parameters: []configuration.ParameterRef{},
 				},
 			},
 			VisibilityConditions: []configuration.VisibilityCondition{
@@ -1533,9 +1532,8 @@ func (c *CreateVM) Configuration() []configuration.Field {
 			Description: "Select a snapshot to create the boot disk from.",
 			TypeOptions: &configuration.TypeOptions{
 				Resource: &configuration.ResourceTypeOptions{
-					Type: ResourceTypeSnapshots,
-					Parameters: []configuration.ParameterRef{
-					},
+					Type:       ResourceTypeSnapshots,
+					Parameters: []configuration.ParameterRef{},
 				},
 			},
 			VisibilityConditions: []configuration.VisibilityCondition{
@@ -1855,9 +1853,8 @@ func (c *CreateVM) Configuration() []configuration.Field {
 			Description: "VPC network for the VM. Leave empty to use the default network.",
 			TypeOptions: &configuration.TypeOptions{
 				Resource: &configuration.ResourceTypeOptions{
-					Type: ResourceTypeNetwork,
-					Parameters: []configuration.ParameterRef{
-					},
+					Type:       ResourceTypeNetwork,
+					Parameters: []configuration.ParameterRef{},
 				},
 			},
 		},

@@ -2,8 +2,10 @@ package gcp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -11,13 +13,15 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/superplanehq/superplane/pkg/configuration"
 	"github.com/superplanehq/superplane/pkg/core"
+	"github.com/superplanehq/superplane/pkg/crypto"
 	gcpcommon "github.com/superplanehq/superplane/pkg/integrations/gcp/common"
 	"github.com/superplanehq/superplane/pkg/integrations/gcp/compute"
+	gcppubsub "github.com/superplanehq/superplane/pkg/integrations/gcp/pubsub"
 	"github.com/superplanehq/superplane/pkg/registry"
 )
 
 func init() {
-	registry.RegisterIntegrationWithWebhookHandler("gcp", &GCP{}, &WebhookHandler{})
+	registry.RegisterIntegration("gcp", &GCP{})
 	compute.SetClientFactory(func(ctx core.ExecutionContext) (compute.Client, error) {
 		return gcpcommon.NewClient(ctx.HTTP, ctx.Integration)
 	})
@@ -28,6 +32,8 @@ type GCP struct{}
 const (
 	ConnectionMethodServiceAccountKey = "serviceAccountKey"
 	ConnectionMethodWIF               = "workloadIdentityFederation"
+
+	PubSubSecretName = "pubsub.events.secret"
 )
 
 type Configuration struct {
@@ -70,7 +76,11 @@ func (g *GCP) Instructions() string {
 4. Grant the federated identity permission to [impersonate a service account](https://cloud.google.com/iam/docs/workload-identity-federation-with-other-providers#mapping) with the roles your workflows need.
 5. Enter the **pool provider resource name** and **Project ID** below.
 
-> Grant only the IAM roles your workflows need.`
+## Required IAM roles
+
+- ` + "`roles/logging.configWriter`" + ` — create logging sinks for event triggers
+- ` + "`roles/pubsub.admin`" + ` — manage Pub/Sub topics, subscriptions, and IAM policies for event delivery
+- Additional roles depending on which components you use (e.g. ` + "`roles/compute.admin`" + ` for VM management)`
 }
 
 func (g *GCP) Configuration() []configuration.Field {
@@ -204,6 +214,11 @@ func (g *GCP) syncWIF(ctx core.SyncContext, config Configuration) error {
 		return fmt.Errorf("connection failed. Ensure the 'Cloud Resource Manager API' is enabled and the federated identity has 'Viewer' (or equivalent) on the project: %w", err)
 	}
 
+	if err := g.configurePubSub(ctx, client, &metadata); err != nil {
+		return fmt.Errorf("failed to configure Pub/Sub event bus: %w", err)
+	}
+	ctx.Integration.SetMetadata(metadata)
+
 	if err := ctx.Integration.ScheduleResync(refreshAfter); err != nil {
 		ctx.Logger.Warnf("could not schedule GCP WIF resync: %v", err)
 	}
@@ -242,6 +257,11 @@ func (g *GCP) syncServiceAccountKey(ctx core.SyncContext, config Configuration) 
 		return fmt.Errorf("connection failed. Ensure the 'Cloud Resource Manager API' is enabled on your project and the service account has 'Viewer' permissions: %w", err)
 	}
 
+	if err := g.configurePubSub(ctx, client, &metadata); err != nil {
+		return fmt.Errorf("failed to configure Pub/Sub event bus: %w", err)
+	}
+	ctx.Integration.SetMetadata(metadata)
+
 	ctx.Integration.Ready()
 	return nil
 }
@@ -277,7 +297,112 @@ func validateAndParseServiceAccountKey(keyJSON []byte) (gcpcommon.Metadata, erro
 	}, nil
 }
 
+func (g *GCP) configurePubSub(ctx core.SyncContext, client *gcpcommon.Client, metadata *gcpcommon.Metadata) error {
+	if metadata.PubSubTopic != "" {
+		return nil
+	}
+
+	projectID := client.ProjectID()
+	reqCtx := context.Background()
+
+	enabled, err := gcppubsub.IsAPIEnabled(reqCtx, client, projectID, "pubsub.googleapis.com")
+	if err != nil {
+		return fmt.Errorf("check Pub/Sub API: %w", err)
+	}
+	if !enabled {
+		return fmt.Errorf("Pub/Sub API is not enabled in project %s. Enable it at https://console.cloud.google.com/apis/library/pubsub.googleapis.com?project=%s", projectID, projectID)
+	}
+
+	secret, err := g.eventsSecret(ctx.Integration)
+	if err != nil {
+		return fmt.Errorf("generate events secret: %w", err)
+	}
+
+	sanitized := sanitizeID(ctx.Integration.ID().String())
+	topicID := "sp-events-" + sanitized
+	subscriptionID := "sp-sub-" + sanitized
+
+	if err := gcppubsub.CreateTopic(reqCtx, client, projectID, topicID); err != nil {
+		return fmt.Errorf("create Pub/Sub topic: %w", err)
+	}
+
+	pushEndpoint := fmt.Sprintf("%s/api/v1/integrations/%s/events?token=%s", ctx.WebhooksBaseURL, ctx.Integration.ID(), secret)
+	if err := gcppubsub.CreatePushSubscription(reqCtx, client, projectID, subscriptionID, topicID, pushEndpoint); err != nil {
+		return fmt.Errorf("create Pub/Sub push subscription: %w", err)
+	}
+
+	ctx.Logger.Infof("Created Pub/Sub topic %s and subscription %s for event routing", topicID, subscriptionID)
+
+	metadata.PubSubTopic = topicID
+	metadata.PubSubSubscription = subscriptionID
+	return nil
+}
+
+func (g *GCP) eventsSecret(integration core.IntegrationContext) (string, error) {
+	secrets, err := integration.GetSecrets()
+	if err != nil {
+		return "", err
+	}
+
+	for _, s := range secrets {
+		if s.Name == PubSubSecretName {
+			return string(s.Value), nil
+		}
+	}
+
+	secret, err := crypto.Base64String(32)
+	if err != nil {
+		return "", fmt.Errorf("generate random secret: %w", err)
+	}
+
+	if err := integration.SetSecret(PubSubSecretName, []byte(secret)); err != nil {
+		return "", fmt.Errorf("store events secret: %w", err)
+	}
+	return secret, nil
+}
+
+func sanitizeID(s string) string {
+	var b strings.Builder
+	for _, c := range strings.ToLower(s) {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			b.WriteRune(c)
+		}
+	}
+	result := b.String()
+	if len(result) > 40 {
+		result = result[:40]
+	}
+	return result
+}
+
 func (g *GCP) Cleanup(ctx core.IntegrationCleanupContext) error {
+	var m gcpcommon.Metadata
+	if err := mapstructure.Decode(ctx.Integration.GetMetadata(), &m); err != nil || m.ProjectID == "" {
+		return nil
+	}
+
+	client, err := gcpcommon.NewClient(ctx.HTTP, ctx.Integration)
+	if err != nil {
+		ctx.Logger.Warnf("failed to create GCP client for cleanup: %v", err)
+		return nil
+	}
+
+	reqCtx := context.Background()
+	if m.PubSubSubscription != "" {
+		if err := gcppubsub.DeleteSubscription(reqCtx, client, m.ProjectID, m.PubSubSubscription); err != nil {
+			if !gcpcommon.IsNotFoundError(err) {
+				ctx.Logger.Warnf("failed to delete Pub/Sub subscription %s: %v", m.PubSubSubscription, err)
+			}
+		}
+	}
+	if m.PubSubTopic != "" {
+		if err := gcppubsub.DeleteTopic(reqCtx, client, m.ProjectID, m.PubSubTopic); err != nil {
+			if !gcpcommon.IsNotFoundError(err) {
+				ctx.Logger.Warnf("failed to delete Pub/Sub topic %s: %v", m.PubSubTopic, err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -333,5 +458,157 @@ func (g *GCP) ListResources(resourceType string, ctx core.ListResourcesContext) 
 }
 
 func (g *GCP) HandleRequest(ctx core.HTTPRequestContext) {
+	if strings.HasSuffix(ctx.Request.URL.Path, "/events") {
+		g.handleEvent(ctx)
+		return
+	}
+
 	ctx.Response.WriteHeader(http.StatusNotFound)
+}
+
+// AuditLogEvent is the normalized event structure extracted from a Cloud Logging
+// audit log entry, used both for subscription pattern matching and as the message
+// payload delivered to triggers via OnIntegrationMessage.
+type AuditLogEvent struct {
+	ServiceName  string `json:"serviceName" mapstructure:"serviceName"`
+	MethodName   string `json:"methodName" mapstructure:"methodName"`
+	ResourceName string `json:"resourceName" mapstructure:"resourceName"`
+	LogName      string `json:"logName" mapstructure:"logName"`
+	Timestamp    string `json:"timestamp" mapstructure:"timestamp"`
+	InsertID     string `json:"insertId" mapstructure:"insertId"`
+	Data         any    `json:"data" mapstructure:"data"`
+}
+
+// AuditLogEventPattern is the subscription pattern used to match incoming events
+// against trigger subscriptions. Only non-empty fields are matched.
+type AuditLogEventPattern struct {
+	ServiceName string `json:"serviceName" mapstructure:"serviceName"`
+	MethodName  string `json:"methodName" mapstructure:"methodName"`
+}
+
+type pubsubPushMessage struct {
+	Message struct {
+		Data      string `json:"data"`
+		MessageID string `json:"messageId"`
+	} `json:"message"`
+	Subscription string `json:"subscription"`
+}
+
+type logEntryProtoPayload struct {
+	ServiceName  string `json:"serviceName"`
+	MethodName   string `json:"methodName"`
+	ResourceName string `json:"resourceName"`
+}
+
+type logEntry struct {
+	ProtoPayload logEntryProtoPayload `json:"protoPayload"`
+	LogName      string               `json:"logName"`
+	Timestamp    string               `json:"timestamp"`
+	InsertID     string               `json:"insertId"`
+}
+
+func (g *GCP) handleEvent(ctx core.HTTPRequestContext) {
+	token := ctx.Request.URL.Query().Get("token")
+	if token == "" {
+		ctx.Response.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	secrets, err := ctx.Integration.GetSecrets()
+	if err != nil {
+		ctx.Response.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	var secret string
+	for _, s := range secrets {
+		if s.Name == PubSubSecretName {
+			secret = string(s.Value)
+			break
+		}
+	}
+
+	if token != secret {
+		ctx.Response.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	body, err := io.ReadAll(ctx.Request.Body)
+	if err != nil {
+		ctx.Response.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	var pushMsg pubsubPushMessage
+	if err := json.Unmarshal(body, &pushMsg); err != nil {
+		ctx.Response.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	decoded, err := base64Decode(pushMsg.Message.Data)
+	if err != nil {
+		ctx.Logger.Warnf("failed to decode Pub/Sub message data: %v", err)
+		ctx.Response.WriteHeader(http.StatusOK)
+		return
+	}
+
+	var entry logEntry
+	if err := json.Unmarshal(decoded, &entry); err != nil {
+		ctx.Logger.Warnf("failed to parse log entry: %v", err)
+		ctx.Response.WriteHeader(http.StatusOK)
+		return
+	}
+
+	var rawData map[string]any
+	_ = json.Unmarshal(decoded, &rawData)
+
+	event := AuditLogEvent{
+		ServiceName:  entry.ProtoPayload.ServiceName,
+		MethodName:   strings.TrimSpace(entry.ProtoPayload.MethodName),
+		ResourceName: entry.ProtoPayload.ResourceName,
+		LogName:      entry.LogName,
+		Timestamp:    entry.Timestamp,
+		InsertID:     entry.InsertID,
+		Data:         rawData,
+	}
+
+	subscriptions, err := ctx.Integration.ListSubscriptions()
+	if err != nil {
+		ctx.Logger.Errorf("error listing subscriptions: %v", err)
+		ctx.Response.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	for _, subscription := range subscriptions {
+		if !g.subscriptionApplies(subscription, event) {
+			continue
+		}
+
+		if err := subscription.SendMessage(event); err != nil {
+			ctx.Logger.Errorf("error sending message to subscription: %v", err)
+		}
+	}
+
+	ctx.Response.WriteHeader(http.StatusOK)
+}
+
+func (g *GCP) subscriptionApplies(subscription core.IntegrationSubscriptionContext, event AuditLogEvent) bool {
+	var pattern AuditLogEventPattern
+	if err := mapstructure.Decode(subscription.Configuration(), &pattern); err != nil {
+		return false
+	}
+
+	if pattern.ServiceName != "" && pattern.ServiceName != event.ServiceName {
+		return false
+	}
+
+	if pattern.MethodName != "" && pattern.MethodName != event.MethodName {
+		return false
+	}
+
+	return true
+}
+
+func base64Decode(s string) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(s)
 }

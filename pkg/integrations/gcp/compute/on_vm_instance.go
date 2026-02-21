@@ -1,19 +1,20 @@
 package compute
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/mitchellh/mapstructure"
 	"github.com/superplanehq/superplane/pkg/configuration"
 	"github.com/superplanehq/superplane/pkg/core"
+	gcpcommon "github.com/superplanehq/superplane/pkg/integrations/gcp/common"
+	gcppubsub "github.com/superplanehq/superplane/pkg/integrations/gcp/pubsub"
 )
 
 const (
-	auditLogEventType          = "google.cloud.audit.log.v1.written"
 	computeServiceName         = "compute.googleapis.com"
 	instancesInsertMethod      = "v1.compute.instances.insert"
 	instancesInsertMethodBeta  = "beta.compute.instances.insert"
@@ -26,49 +27,21 @@ var vmInsertMethodNames = []string{
 	instancesInsertMethodShort,
 }
 
-// InstanceCelFilter is the Eventarc Advanced enrollment filter for VM instance creation events.
-const InstanceCelFilter = `message.type == "google.cloud.audit.log.v1.written" && message.serviceName == "compute.googleapis.com" && (message.methodName == "v1.compute.instances.insert" || message.methodName == "beta.compute.instances.insert" || message.methodName == "compute.instances.insert")`
+const (
+	EmittedEventType = "gcp.compute.vmInstance"
 
-type auditLogOperation struct {
-	Last  bool `json:"last"`
-	First bool `json:"first"`
-}
-
-type EventPayload struct {
-	Type            string         `json:"type"`
-	Source          string         `json:"source"`
-	SpecVersion     string         `json:"specversion"`
-	DataContentType string         `json:"datacontenttype"`
-	ID              string         `json:"id"`
-	Time            string         `json:"time"`
-	ServiceName     string         `json:"serviceName"`
-	MethodName      string         `json:"methodName"`
-	ResourceName    string         `json:"resourceName"`
-	Subject         string         `json:"subject"`
-	Data            map[string]any `json:"data"`
-}
-
-type LogEntryDataPayload struct {
-	ProtoPayload *struct {
-		ServiceName  string `json:"serviceName"`
-		MethodName   string `json:"methodName"`
-		ResourceName string `json:"resourceName"`
-	} `json:"protoPayload"`
-	Operation        *auditLogOperation `json:"operation"`
-	LogName          string             `json:"logName"`
-	Timestamp        string             `json:"timestamp"`
-	InsertID         string             `json:"insertId"`
-	Resource         any                `json:"resource"`
-	ReceiveTimestamp string             `json:"receiveTimestamp"`
-}
-
-const EmittedEventType = "gcp.compute.vmInstance"
+	// SinkFilter is the Cloud Logging advanced log filter for VM instance
+	// creation audit events. Used when creating the per-trigger logging sink.
+	SinkFilter = `protoPayload.serviceName="compute.googleapis.com" AND (protoPayload.methodName="v1.compute.instances.insert" OR protoPayload.methodName="beta.compute.instances.insert" OR protoPayload.methodName="compute.instances.insert")`
+)
 
 type OnVMInstance struct{}
 
-type OnVMInstanceConfiguration struct {
-	ProjectID string `json:"projectId" mapstructure:"projectId"`
-	Region    string `json:"region" mapstructure:"region"`
+type OnVMInstanceConfiguration struct{}
+
+type OnVMInstanceMetadata struct {
+	SubscriptionID string `json:"subscriptionId" mapstructure:"subscriptionId"`
+	SinkID         string `json:"sinkId" mapstructure:"sinkId"`
 }
 
 func (t *OnVMInstance) Name() string {
@@ -86,7 +59,7 @@ func (t *OnVMInstance) Description() string {
 func (t *OnVMInstance) Documentation() string {
 	return `The On VM Instance trigger starts a workflow execution when a Compute Engine VM instance lifecycle event occurs.
 
-**Trigger behavior:** The trigger uses **Eventarc Advanced**: a shared message bus receives all Google Cloud audit log events, and an enrollment filters for VM instance events and delivers them to SuperPlane via an HTTPS pipeline with OIDC authentication.
+**Trigger behavior:** SuperPlane creates a Cloud Logging sink that captures Compute Engine audit log events and routes them to a shared Pub/Sub topic. Events are pushed to SuperPlane and matched to this trigger automatically.
 
 ## Use Cases
 
@@ -94,22 +67,15 @@ func (t *OnVMInstance) Documentation() string {
 - **Inventory and compliance**: Record new VMs or trigger audits
 - **Notifications**: Notify teams or systems when new VMs appear in a project or zone
 
-## Automatic setup
+## Setup
 
-When you set **Project ID** (and optionally **Region**), SuperPlane automatically creates the Eventarc Advanced resources (message bus, Google API source, pipeline, and enrollment) needed to receive VM instance events. No manual setup is required.
+**Required GCP setup:** Ensure the **Pub/Sub** API is enabled in your project and the integration's service account has ` + "`roles/logging.configWriter`" + ` and ` + "`roles/pubsub.admin`" + ` permissions.
 
-**Required GCP setup:** Enable the **Eventarc** API in your project and grant the integration's service account ` + "`roles/eventarc.developer`" + ` and ` + "`roles/iam.serviceAccountTokenCreator`" + `.
-
-**Local testing:** Use ngrok (` + "`ngrok http 8000`" + `) and set ` + "`BASE_URL`" + ` and ` + "`WEBHOOKS_BASE_URL`" + ` to the ngrok HTTPS URL so GCP can reach the webhook.
-
-## Configuration
-
-- **Project ID**: Required. The GCP project where Eventarc resources are created and where VM instance events are received.
-- **Region**: Optional. Default: us-central1. The region where Eventarc resources are provisioned.
+SuperPlane automatically creates a Cloud Logging sink to capture VM instance events.
 
 ## Event Data
 
-Each event includes the full CloudEvents audit payload, including resourceName (e.g. projects/my-project/zones/us-central1-a/instances/my-vm), serviceName (compute.googleapis.com), methodName (v1.compute.instances.insert), and data (audit log entry).`
+Each event includes the audit log entry with resourceName (e.g. projects/my-project/zones/us-central1-a/instances/my-vm), serviceName (compute.googleapis.com), methodName (v1.compute.instances.insert), and the full log entry data.`
 }
 
 func (t *OnVMInstance) Icon() string {
@@ -121,34 +87,16 @@ func (t *OnVMInstance) Color() string {
 }
 
 func (t *OnVMInstance) Configuration() []configuration.Field {
-	return []configuration.Field{
-		{
-			Name:        "projectId",
-			Label:       "Project ID",
-			Type:        configuration.FieldTypeString,
-			Required:    true,
-			Description: "GCP project where Eventarc resources are created and where VM instance events are received.",
-		},
-		{
-			Name:        "region",
-			Label:       "Region",
-			Type:        configuration.FieldTypeString,
-			Required:    false,
-			Description: "Region where Eventarc resources are provisioned (e.g. us-central1). Default: us-central1.",
-			Default:     "us-central1",
-		},
-	}
+	return nil
 }
 
 func (t *OnVMInstance) ExampleData() map[string]any {
 	return map[string]any{
-		"type":         auditLogEventType,
 		"serviceName":  computeServiceName,
 		"methodName":   instancesInsertMethod,
 		"resourceName": "projects/my-project/zones/us-central1-a/instances/my-vm",
-		"source":       "//cloudaudit.googleapis.com/projects/my-project/logs/activity",
-		"id":           "example-event-id",
-		"time":         "2025-02-14T12:00:00Z",
+		"logName":      "projects/my-project/logs/cloudaudit.googleapis.com%2Factivity",
+		"timestamp":    "2025-02-14T12:00:00Z",
 		"data": map[string]any{
 			"protoPayload": map[string]any{
 				"methodName":   instancesInsertMethod,
@@ -159,170 +107,175 @@ func (t *OnVMInstance) ExampleData() map[string]any {
 	}
 }
 
-type OnVMInstanceMetadata struct {
-	WebhookURL string `json:"webhookUrl" mapstructure:"webhookUrl"`
-}
-
 func (t *OnVMInstance) Setup(ctx core.TriggerContext) error {
 	if ctx.Integration == nil {
-		return fmt.Errorf("connect the GCP integration to this trigger to enable automatic event routing with Eventarc Advanced")
+		return fmt.Errorf("connect the GCP integration to this trigger to enable automatic event routing")
 	}
 
-	var config OnVMInstanceConfiguration
-	if err := mapstructure.Decode(ctx.Configuration, &config); err != nil {
-		return fmt.Errorf("failed to decode configuration: %w", err)
-	}
-	projectID := strings.TrimSpace(config.ProjectID)
-	if projectID == "" {
-		return fmt.Errorf("project ID is required for automatic registration with Eventarc Advanced; set Project ID in the trigger configuration")
+	var metadata OnVMInstanceMetadata
+	if err := mapstructure.Decode(ctx.Metadata.Get(), &metadata); err != nil {
+		return fmt.Errorf("failed to decode metadata: %w", err)
 	}
 
-	webhookConfig := map[string]any{
-		"projectId": projectID,
-		"region":    strings.TrimSpace(config.Region),
-		"celFilter": InstanceCelFilter,
-	}
-	if err := ctx.Integration.RequestWebhook(webhookConfig); err != nil {
-		return fmt.Errorf("failed to request webhook for On VM Instance: %w", err)
+	if metadata.SubscriptionID != "" && metadata.SinkID != "" {
+		return nil
 	}
 
-	return ctx.Metadata.Set(OnVMInstanceMetadata{WebhookURL: "(registered automatically)"})
+	subscriptionID, err := ctx.Integration.Subscribe(subscriptionPattern())
+	if err != nil {
+		return fmt.Errorf("failed to subscribe: %w", err)
+	}
+
+	sinkID := "sp-sink-" + sanitizeSinkID(subscriptionID.String())
+
+	if err := ctx.Metadata.Set(OnVMInstanceMetadata{
+		SubscriptionID: subscriptionID.String(),
+		SinkID:         sinkID,
+	}); err != nil {
+		return fmt.Errorf("failed to set metadata: %w", err)
+	}
+
+	return ctx.Requests.ScheduleActionCall("provisionSink", map[string]any{
+		"sinkId": sinkID,
+	}, 2*time.Second)
 }
 
 func (t *OnVMInstance) Actions() []core.Action {
-	return nil
+	return []core.Action{
+		{Name: "provisionSink"},
+	}
 }
 
 func (t *OnVMInstance) HandleAction(ctx core.TriggerActionContext) (map[string]any, error) {
+	if ctx.Name != "provisionSink" {
+		return nil, fmt.Errorf("unknown action: %s", ctx.Name)
+	}
+
+	return t.provisionSink(ctx)
+}
+
+func (t *OnVMInstance) provisionSink(ctx core.TriggerActionContext) (map[string]any, error) {
+	meta, err := integrationMetadata(ctx.Integration)
+	if err != nil {
+		return nil, err
+	}
+
+	if meta.PubSubTopic == "" {
+		return nil, fmt.Errorf("integration Pub/Sub topic not configured; re-sync the GCP integration")
+	}
+
+	sinkID, _ := ctx.Parameters["sinkId"].(string)
+	if sinkID == "" {
+		return nil, fmt.Errorf("sinkId parameter is required")
+	}
+
+	client, err := gcpcommon.NewClient(ctx.HTTP, ctx.Integration)
+	if err != nil {
+		return nil, fmt.Errorf("create GCP client: %w", err)
+	}
+
+	projectID := client.ProjectID()
+	reqCtx := context.Background()
+
+	writerIdentity, err := gcppubsub.CreateSink(reqCtx, client, projectID, sinkID, meta.PubSubTopic, SinkFilter)
+	if err != nil {
+		if !gcpcommon.IsAlreadyExistsError(err) {
+			return nil, fmt.Errorf("create logging sink: %w", err)
+		}
+
+		writerIdentity, err = gcppubsub.GetSink(reqCtx, client, projectID, sinkID)
+		if err != nil {
+			return nil, fmt.Errorf("get existing logging sink: %w", err)
+		}
+	}
+
+	if err := gcppubsub.EnsureTopicPublisher(reqCtx, client, projectID, meta.PubSubTopic, writerIdentity); err != nil {
+		return nil, fmt.Errorf("grant sink publisher permission on topic: %w", err)
+	}
+
 	return nil, nil
 }
 
-func (t *OnVMInstance) HandleWebhook(ctx core.WebhookRequestContext) (int, error) {
-	config := OnVMInstanceConfiguration{}
-	if err := mapstructure.Decode(ctx.Configuration, &config); err != nil {
-		return http.StatusInternalServerError, fmt.Errorf("failed to decode configuration: %w", err)
+func (t *OnVMInstance) OnIntegrationMessage(ctx core.IntegrationMessageContext) error {
+	var event struct {
+		ServiceName  string `mapstructure:"serviceName"`
+		MethodName   string `mapstructure:"methodName"`
+		ResourceName string `mapstructure:"resourceName"`
+		Data         any    `mapstructure:"data"`
+	}
+	if err := mapstructure.Decode(ctx.Message, &event); err != nil {
+		return fmt.Errorf("failed to decode event: %w", err)
 	}
 
-	var payload EventPayload
-	if err := json.Unmarshal(ctx.Body, &payload); err != nil {
-		return http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err)
+	if event.ServiceName != computeServiceName {
+		return nil
 	}
 
-	var serviceName, methodName, resourceName string
-	var eventData map[string]any
-	var operation *auditLogOperation
-
-	if payload.Type == auditLogEventType && payload.ServiceName != "" {
-		serviceName, methodName, resourceName, eventData, operation = normalizedFromEnvelope(&payload)
-	} else {
-		var logEntry LogEntryDataPayload
-		if err := json.Unmarshal(ctx.Body, &logEntry); err != nil || logEntry.ProtoPayload == nil {
-			return http.StatusOK, nil
-		}
-		serviceName, methodName, resourceName, eventData, operation = normalizedFromLogEntry(ctx.Body, &logEntry)
-	}
-
-	if serviceName != computeServiceName {
-		return http.StatusOK, nil
-	}
+	methodName := strings.TrimSpace(event.MethodName)
 	if !slices.Contains(vmInsertMethodNames, methodName) {
-		return http.StatusOK, nil
-	}
-	if !isCompletionEvent(operation) {
-		return http.StatusOK, nil
+		return nil
 	}
 
-	if config.ProjectID != "" {
-		projectID := strings.TrimSpace(config.ProjectID)
-		resourceProject := extractProjectFromResourceName(resourceName)
-		if resourceProject == "" || resourceProject != projectID {
-			ctx.Logger.Infof("Skipping VM instance event for resource %s (project filter: %s)", resourceName, projectID)
-			return http.StatusOK, nil
-		}
-	}
-
-	if err := ctx.Events.Emit(EmittedEventType, eventData); err != nil {
-		return http.StatusInternalServerError, fmt.Errorf("failed to emit event: %w", err)
-	}
-	return http.StatusOK, nil
+	return ctx.Events.Emit(EmittedEventType, ctx.Message)
 }
 
 func (t *OnVMInstance) Cleanup(ctx core.TriggerContext) error {
+	var metadata OnVMInstanceMetadata
+	if err := mapstructure.Decode(ctx.Metadata.Get(), &metadata); err != nil || metadata.SinkID == "" {
+		return nil
+	}
+
+	if ctx.Integration == nil {
+		return nil
+	}
+
+	client, err := gcpcommon.NewClient(ctx.HTTP, ctx.Integration)
+	if err != nil {
+		ctx.Logger.Warnf("failed to create GCP client for sink cleanup: %v", err)
+		return nil
+	}
+
+	if err := gcppubsub.DeleteSink(context.Background(), client, client.ProjectID(), metadata.SinkID); err != nil {
+		if !gcpcommon.IsNotFoundError(err) {
+			ctx.Logger.Warnf("failed to delete logging sink %s: %v", metadata.SinkID, err)
+		}
+	}
+
 	return nil
 }
 
-func extractProjectFromResourceName(resourceName string) string {
-	resourceName = strings.TrimSpace(resourceName)
-	const prefix = "projects/"
-	if !strings.HasPrefix(resourceName, prefix) {
-		return ""
-	}
-	rest := strings.TrimPrefix(resourceName, prefix)
-	idx := strings.Index(rest, "/")
-	if idx < 0 {
-		return rest
-	}
-	return rest[:idx]
+func (t *OnVMInstance) HandleWebhook(ctx core.WebhookRequestContext) (int, error) {
+	return 200, nil
 }
 
-func isCompletionEvent(operation *auditLogOperation) bool {
-	if operation == nil {
-		return true
+func subscriptionPattern() map[string]any {
+	return map[string]any{
+		"serviceName": computeServiceName,
+		"methodName":  instancesInsertMethod,
 	}
-	return operation.Last
 }
 
-func operationFromData(data map[string]any) *auditLogOperation {
-	if data == nil {
-		return nil
+func integrationMetadata(integration core.IntegrationContext) (*gcpcommon.Metadata, error) {
+	var m gcpcommon.Metadata
+	if err := mapstructure.Decode(integration.GetMetadata(), &m); err != nil {
+		return nil, fmt.Errorf("failed to read integration metadata: %w", err)
 	}
-	opMap, ok := data["operation"].(map[string]any)
-	if !ok {
-		return nil
+	if m.ProjectID == "" {
+		return nil, fmt.Errorf("integration metadata does not contain a project ID; re-sync the GCP integration")
 	}
-	last, _ := opMap["last"].(bool)
-	return &auditLogOperation{Last: last}
+	return &m, nil
 }
 
-func normalizedFromEnvelope(payload *EventPayload) (serviceName, methodName, resourceName string, eventData map[string]any, operation *auditLogOperation) {
-	serviceName = payload.ServiceName
-	methodName = strings.TrimSpace(payload.MethodName)
-	resourceName = strings.TrimSpace(payload.ResourceName)
-	eventData = map[string]any{
-		"type":         payload.Type,
-		"source":       payload.Source,
-		"specversion":  payload.SpecVersion,
-		"id":           payload.ID,
-		"time":         payload.Time,
-		"serviceName":  payload.ServiceName,
-		"methodName":   methodName,
-		"resourceName": resourceName,
-		"subject":      payload.Subject,
-		"data":         payload.Data,
+func sanitizeSinkID(s string) string {
+	var b strings.Builder
+	for _, c := range strings.ToLower(s) {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
+			b.WriteRune(c)
+		}
 	}
-	operation = operationFromData(payload.Data)
-	return serviceName, methodName, resourceName, eventData, operation
-}
-
-func normalizedFromLogEntry(body []byte, entry *LogEntryDataPayload) (serviceName, methodName, resourceName string, eventData map[string]any, operation *auditLogOperation) {
-	proto := entry.ProtoPayload
-	serviceName = proto.ServiceName
-	methodName = strings.TrimSpace(proto.MethodName)
-	resourceName = proto.ResourceName
-	eventData = map[string]any{
-		"type":         auditLogEventType,
-		"serviceName":  serviceName,
-		"methodName":   methodName,
-		"resourceName": resourceName,
-		"logName":      entry.LogName,
-		"timestamp":    entry.Timestamp,
-		"insertId":     entry.InsertID,
-		"data":         nil,
+	result := b.String()
+	if len(result) > 80 {
+		result = result[:80]
 	}
-	var raw map[string]any
-	if json.Unmarshal(body, &raw) == nil {
-		eventData["data"] = raw
-	}
-	operation = entry.Operation
-	return serviceName, methodName, resourceName, eventData, operation
+	return result
 }

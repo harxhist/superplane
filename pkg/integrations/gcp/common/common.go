@@ -18,4 +18,6 @@ type Metadata struct {
 	ClientEmail          string `json:"clientEmail"`
 	AuthMethod           string `json:"authMethod"`
 	AccessTokenExpiresAt string `json:"accessTokenExpiresAt"`
+	PubSubTopic          string `json:"pubsubTopic,omitempty"`
+	PubSubSubscription   string `json:"pubsubSubscription,omitempty"`
 }
