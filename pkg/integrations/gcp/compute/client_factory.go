@@ -1,4 +1,4 @@
-package createvm
+package compute
 
 import (
 	"context"
@@ -30,7 +30,7 @@ func getClient(ctx core.ExecutionContext) (Client, error) {
 	fn := clientFactory
 	clientFactoryMu.RUnlock()
 	if fn == nil {
-		panic("gcp createvm: SetClientFactory was not called by the gcp integration")
+		panic("gcp compute: SetClientFactory was not called by the gcp integration")
 	}
 	return fn(ctx)
 }

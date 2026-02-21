@@ -8,6 +8,8 @@ import (
 
 	"github.com/mitchellh/mapstructure"
 	"github.com/superplanehq/superplane/pkg/core"
+	gcpcommon "github.com/superplanehq/superplane/pkg/integrations/gcp/common"
+	"github.com/superplanehq/superplane/pkg/integrations/gcp/eventarc"
 )
 
 const (
@@ -51,13 +53,13 @@ func (h *WebhookHandler) Setup(ctx core.WebhookHandlerContext) (any, error) {
 		return nil, fmt.Errorf("CEL filter is required")
 	}
 
-	client, err := NewClient(ctx.HTTP, ctx.Integration)
+	client, err := gcpcommon.NewClient(ctx.HTTP, ctx.Integration)
 	if err != nil {
 		return nil, fmt.Errorf("create GCP client: %w", err)
 	}
 
 	meta := ctx.Integration.GetMetadata()
-	var m Metadata
+	var m gcpcommon.Metadata
 	if err := mapstructure.Decode(meta, &m); err != nil {
 		return nil, fmt.Errorf("decode integration metadata: %w", err)
 	}
@@ -72,29 +74,29 @@ func (h *WebhookHandler) Setup(ctx core.WebhookHandlerContext) (any, error) {
 	pipelineID := pipelinePrefix + strings.ReplaceAll(webhookID, "-", "")
 	enrollmentID := enrollmentPrefix + strings.ReplaceAll(webhookID, "-", "")
 
-	busFullName := MessageBusFullName(projectID, region, busID)
-	pipelineFullName := PipelineFullName(projectID, region, pipelineID)
+	busFullName := eventarc.MessageBusFullName(projectID, region, busID)
+	pipelineFullName := eventarc.PipelineFullName(projectID, region, pipelineID)
 
 	if err := h.ensureSharedResources(reqCtx, client, projectID, region, busID, sourceID, busFullName); err != nil {
 		return nil, err
 	}
 
 	webhookURL := ctx.Webhook.GetURL()
-	pipelineOp, err := CreatePipeline(reqCtx, client, projectID, region, pipelineID, webhookURL, serviceAccountEmail)
+	pipelineOp, err := eventarc.CreatePipeline(reqCtx, client, projectID, region, pipelineID, webhookURL, serviceAccountEmail)
 	if err != nil {
 		return nil, fmt.Errorf("create pipeline: %w", err)
 	}
-	if err := PollOperation(reqCtx, client, pipelineOp, operationTimeout); err != nil {
+	if err := eventarc.PollOperation(reqCtx, client, pipelineOp, operationTimeout); err != nil {
 		return nil, fmt.Errorf("wait for pipeline: %w", err)
 	}
 
-	enrollmentOp, err := CreateEnrollment(reqCtx, client, projectID, region, enrollmentID, busFullName, pipelineFullName, celFilter)
+	enrollmentOp, err := eventarc.CreateEnrollment(reqCtx, client, projectID, region, enrollmentID, busFullName, pipelineFullName, celFilter)
 	if err != nil {
-		_ = DeletePipeline(reqCtx, client, projectID, region, pipelineID)
+		_ = eventarc.DeletePipeline(reqCtx, client, projectID, region, pipelineID)
 		return nil, fmt.Errorf("create enrollment: %w", err)
 	}
-	if err := PollOperation(reqCtx, client, enrollmentOp, operationTimeout); err != nil {
-		_ = DeletePipeline(reqCtx, client, projectID, region, pipelineID)
+	if err := eventarc.PollOperation(reqCtx, client, enrollmentOp, operationTimeout); err != nil {
+		_ = eventarc.DeletePipeline(reqCtx, client, projectID, region, pipelineID)
 		return nil, fmt.Errorf("wait for enrollment: %w", err)
 	}
 
@@ -106,36 +108,36 @@ func (h *WebhookHandler) Setup(ctx core.WebhookHandlerContext) (any, error) {
 	}, nil
 }
 
-func (h *WebhookHandler) ensureSharedResources(ctx context.Context, client *Client, projectID, region, busID, sourceID, busFullName string) error {
-	if err := GetMessageBus(ctx, client, projectID, region, busID); err != nil {
-		if !IsNotFoundError(err) {
+func (h *WebhookHandler) ensureSharedResources(ctx context.Context, client *gcpcommon.Client, projectID, region, busID, sourceID, busFullName string) error {
+	if err := eventarc.GetMessageBus(ctx, client, projectID, region, busID); err != nil {
+		if !eventarc.IsNotFoundError(err) {
 			return fmt.Errorf("check message bus: %w", err)
 		}
 
-		busOp, err := CreateMessageBus(ctx, client, projectID, region, busID)
+		busOp, err := eventarc.CreateMessageBus(ctx, client, projectID, region, busID)
 		if err != nil {
-			if !IsAlreadyExistsError(err) {
+			if !eventarc.IsAlreadyExistsError(err) {
 				return fmt.Errorf("create message bus: %w", err)
 			}
 		} else {
-			if err := PollOperation(ctx, client, busOp, operationTimeout); err != nil {
+			if err := eventarc.PollOperation(ctx, client, busOp, operationTimeout); err != nil {
 				return fmt.Errorf("wait for message bus: %w", err)
 			}
 		}
 	}
 
-	if err := GetGoogleAPISource(ctx, client, projectID, region, sourceID); err != nil {
-		if !IsNotFoundError(err) {
+	if err := eventarc.GetGoogleAPISource(ctx, client, projectID, region, sourceID); err != nil {
+		if !eventarc.IsNotFoundError(err) {
 			return fmt.Errorf("check google api source: %w", err)
 		}
 
-		sourceOp, err := CreateGoogleAPISource(ctx, client, projectID, region, sourceID, busFullName)
+		sourceOp, err := eventarc.CreateGoogleAPISource(ctx, client, projectID, region, sourceID, busFullName)
 		if err != nil {
-			if !IsAlreadyExistsError(err) {
+			if !eventarc.IsAlreadyExistsError(err) {
 				return fmt.Errorf("create google api source: %w", err)
 			}
 		} else {
-			if err := PollOperation(ctx, client, sourceOp, operationTimeout); err != nil {
+			if err := eventarc.PollOperation(ctx, client, sourceOp, operationTimeout); err != nil {
 				return fmt.Errorf("wait for google api source: %w", err)
 			}
 		}
@@ -164,17 +166,17 @@ func (h *WebhookHandler) Cleanup(ctx core.WebhookHandlerContext) error {
 		return nil
 	}
 
-	client, err := NewClient(ctx.HTTP, ctx.Integration)
+	client, err := gcpcommon.NewClient(ctx.HTTP, ctx.Integration)
 	if err != nil {
 		return fmt.Errorf("create GCP client for cleanup: %w", err)
 	}
 	reqCtx := context.Background()
 
 	if id := getMetaString(metaMap, webhookMetadataEnrollmentID); id != "" {
-		_ = DeleteEnrollment(reqCtx, client, projectID, region, id)
+		_ = eventarc.DeleteEnrollment(reqCtx, client, projectID, region, id)
 	}
 	if id := getMetaString(metaMap, webhookMetadataPipelineID); id != "" {
-		_ = DeletePipeline(reqCtx, client, projectID, region, id)
+		_ = eventarc.DeletePipeline(reqCtx, client, projectID, region, id)
 	}
 
 	return nil

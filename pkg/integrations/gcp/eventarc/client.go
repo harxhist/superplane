@@ -1,21 +1,21 @@
-package gcp
+package eventarc
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net/http"
 	"time"
+
+	"github.com/superplanehq/superplane/pkg/integrations/gcp/common"
 )
 
-const eventarcBaseURL = "https://eventarc.googleapis.com/v1"
+const baseURL = "https://eventarc.googleapis.com/v1"
 
 // --- MessageBus ---
 
-func CreateMessageBus(ctx context.Context, client *Client, projectID, region, busID string) (string, error) {
-	url := fmt.Sprintf("%s/projects/%s/locations/%s/messageBuses?messageBusId=%s", eventarcBaseURL, projectID, region, busID)
+func CreateMessageBus(ctx context.Context, client *common.Client, projectID, region, busID string) (string, error) {
+	url := fmt.Sprintf("%s/projects/%s/locations/%s/messageBuses?messageBusId=%s", baseURL, projectID, region, busID)
 	raw, err := json.Marshal(map[string]string{"displayName": busID})
 	if err != nil {
 		return "", fmt.Errorf("marshal message bus body: %w", err)
@@ -27,22 +27,22 @@ func CreateMessageBus(ctx context.Context, client *Client, projectID, region, bu
 	return operationName(resp)
 }
 
-func GetMessageBus(ctx context.Context, client *Client, projectID, region, busID string) error {
-	url := fmt.Sprintf("%s/projects/%s/locations/%s/messageBuses/%s", eventarcBaseURL, projectID, region, busID)
+func GetMessageBus(ctx context.Context, client *common.Client, projectID, region, busID string) error {
+	url := fmt.Sprintf("%s/projects/%s/locations/%s/messageBuses/%s", baseURL, projectID, region, busID)
 	_, err := client.ExecRequest(ctx, "GET", url, nil)
 	return err
 }
 
-func DeleteMessageBus(ctx context.Context, client *Client, projectID, region, busID string) error {
-	url := fmt.Sprintf("%s/projects/%s/locations/%s/messageBuses/%s", eventarcBaseURL, projectID, region, busID)
+func DeleteMessageBus(ctx context.Context, client *common.Client, projectID, region, busID string) error {
+	url := fmt.Sprintf("%s/projects/%s/locations/%s/messageBuses/%s", baseURL, projectID, region, busID)
 	_, err := client.ExecRequest(ctx, "DELETE", url, nil)
 	return err
 }
 
 // --- GoogleApiSource ---
 
-func CreateGoogleAPISource(ctx context.Context, client *Client, projectID, region, sourceID, busFullName string) (string, error) {
-	url := fmt.Sprintf("%s/projects/%s/locations/%s/googleApiSources?googleApiSourceId=%s", eventarcBaseURL, projectID, region, sourceID)
+func CreateGoogleAPISource(ctx context.Context, client *common.Client, projectID, region, sourceID, busFullName string) (string, error) {
+	url := fmt.Sprintf("%s/projects/%s/locations/%s/googleApiSources?googleApiSourceId=%s", baseURL, projectID, region, sourceID)
 	raw, err := json.Marshal(map[string]string{
 		"destination": busFullName,
 		"displayName": sourceID,
@@ -57,14 +57,14 @@ func CreateGoogleAPISource(ctx context.Context, client *Client, projectID, regio
 	return operationName(resp)
 }
 
-func GetGoogleAPISource(ctx context.Context, client *Client, projectID, region, sourceID string) error {
-	url := fmt.Sprintf("%s/projects/%s/locations/%s/googleApiSources/%s", eventarcBaseURL, projectID, region, sourceID)
+func GetGoogleAPISource(ctx context.Context, client *common.Client, projectID, region, sourceID string) error {
+	url := fmt.Sprintf("%s/projects/%s/locations/%s/googleApiSources/%s", baseURL, projectID, region, sourceID)
 	_, err := client.ExecRequest(ctx, "GET", url, nil)
 	return err
 }
 
-func DeleteGoogleAPISource(ctx context.Context, client *Client, projectID, region, sourceID string) error {
-	url := fmt.Sprintf("%s/projects/%s/locations/%s/googleApiSources/%s", eventarcBaseURL, projectID, region, sourceID)
+func DeleteGoogleAPISource(ctx context.Context, client *common.Client, projectID, region, sourceID string) error {
+	url := fmt.Sprintf("%s/projects/%s/locations/%s/googleApiSources/%s", baseURL, projectID, region, sourceID)
 	_, err := client.ExecRequest(ctx, "DELETE", url, nil)
 	return err
 }
@@ -106,8 +106,8 @@ type retryPolicy struct {
 	MaxRetryDelay string `json:"maxRetryDelay"`
 }
 
-func CreatePipeline(ctx context.Context, client *Client, projectID, region, pipelineID, webhookURL, serviceAccountEmail string) (string, error) {
-	url := fmt.Sprintf("%s/projects/%s/locations/%s/pipelines?pipelineId=%s", eventarcBaseURL, projectID, region, pipelineID)
+func CreatePipeline(ctx context.Context, client *common.Client, projectID, region, pipelineID, webhookURL, serviceAccountEmail string) (string, error) {
+	url := fmt.Sprintf("%s/projects/%s/locations/%s/pipelines?pipelineId=%s", baseURL, projectID, region, pipelineID)
 	req := pipelineRequest{
 		DisplayName: pipelineID,
 		Destinations: []pipelineDestination{
@@ -139,8 +139,8 @@ func CreatePipeline(ctx context.Context, client *Client, projectID, region, pipe
 	return operationName(resp)
 }
 
-func DeletePipeline(ctx context.Context, client *Client, projectID, region, pipelineID string) error {
-	url := fmt.Sprintf("%s/projects/%s/locations/%s/pipelines/%s", eventarcBaseURL, projectID, region, pipelineID)
+func DeletePipeline(ctx context.Context, client *common.Client, projectID, region, pipelineID string) error {
+	url := fmt.Sprintf("%s/projects/%s/locations/%s/pipelines/%s", baseURL, projectID, region, pipelineID)
 	_, err := client.ExecRequest(ctx, "DELETE", url, nil)
 	return err
 }
@@ -154,8 +154,8 @@ type enrollmentRequest struct {
 	Destination string `json:"destination"`
 }
 
-func CreateEnrollment(ctx context.Context, client *Client, projectID, region, enrollmentID, busFullName, pipelineFullName, celFilter string) (string, error) {
-	url := fmt.Sprintf("%s/projects/%s/locations/%s/enrollments?enrollmentId=%s", eventarcBaseURL, projectID, region, enrollmentID)
+func CreateEnrollment(ctx context.Context, client *common.Client, projectID, region, enrollmentID, busFullName, pipelineFullName, celFilter string) (string, error) {
+	url := fmt.Sprintf("%s/projects/%s/locations/%s/enrollments?enrollmentId=%s", baseURL, projectID, region, enrollmentID)
 	req := enrollmentRequest{
 		DisplayName: enrollmentID,
 		CelMatch:    celFilter,
@@ -173,8 +173,8 @@ func CreateEnrollment(ctx context.Context, client *Client, projectID, region, en
 	return operationName(resp)
 }
 
-func DeleteEnrollment(ctx context.Context, client *Client, projectID, region, enrollmentID string) error {
-	url := fmt.Sprintf("%s/projects/%s/locations/%s/enrollments/%s", eventarcBaseURL, projectID, region, enrollmentID)
+func DeleteEnrollment(ctx context.Context, client *common.Client, projectID, region, enrollmentID string) error {
+	url := fmt.Sprintf("%s/projects/%s/locations/%s/enrollments/%s", baseURL, projectID, region, enrollmentID)
 	_, err := client.ExecRequest(ctx, "DELETE", url, nil)
 	return err
 }
@@ -192,7 +192,7 @@ type operationError struct {
 	Message string `json:"message"`
 }
 
-func PollOperation(ctx context.Context, client *Client, opName string, timeout time.Duration) error {
+func PollOperation(ctx context.Context, client *common.Client, opName string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	interval := 3 * time.Second
 
@@ -201,7 +201,7 @@ func PollOperation(ctx context.Context, client *Client, opName string, timeout t
 			return fmt.Errorf("operation %s timed out after %s", opName, timeout)
 		}
 
-		url := fmt.Sprintf("%s/%s", eventarcBaseURL, opName)
+		url := fmt.Sprintf("%s/%s", baseURL, opName)
 		resp, err := client.ExecRequest(ctx, "GET", url, nil)
 		if err != nil {
 			return fmt.Errorf("poll operation %s: %w", opName, err)
@@ -242,26 +242,18 @@ func operationName(resp []byte) (string, error) {
 	return op.Name, nil
 }
 
-func IsAlreadyExistsError(err error) bool {
-	var apiErr *GCPAPIError
-	if errors.As(err, &apiErr) {
-		return apiErr.StatusCode == http.StatusConflict
-	}
-	return false
-}
-
-func IsNotFoundError(err error) bool {
-	var apiErr *GCPAPIError
-	if errors.As(err, &apiErr) {
-		return apiErr.StatusCode == http.StatusNotFound
-	}
-	return false
-}
-
 func MessageBusFullName(projectID, region, busID string) string {
 	return fmt.Sprintf("projects/%s/locations/%s/messageBuses/%s", projectID, region, busID)
 }
 
 func PipelineFullName(projectID, region, pipelineID string) string {
 	return fmt.Sprintf("projects/%s/locations/%s/pipelines/%s", projectID, region, pipelineID)
+}
+
+func IsAlreadyExistsError(err error) bool {
+	return common.IsAlreadyExistsError(err)
+}
+
+func IsNotFoundError(err error) bool {
+	return common.IsNotFoundError(err)
 }

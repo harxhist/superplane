@@ -1,4 +1,4 @@
-package gcp
+package common
 
 import (
 	"context"
@@ -12,19 +12,6 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
-const (
-	SecretNameServiceAccountKey = "serviceAccountKey"
-	SecretNameAccessToken       = "accessToken"
-	scopeCloudPlatform          = "https://www.googleapis.com/auth/cloud-platform"
-)
-
-var RequiredJSONKeys = []string{"type", "project_id", "private_key_id", "private_key", "client_email", "client_id"}
-
-const (
-	AuthMethodServiceAccountKey = "serviceAccountKey"
-	AuthMethodWIF               = "workloadIdentityFederation"
-)
-
 type wifMetadata struct {
 	AccessTokenExpiresAt string `json:"accessTokenExpiresAt" mapstructure:"accessTokenExpiresAt"`
 }
@@ -35,12 +22,12 @@ func TokenSourceFromIntegration(ctx core.IntegrationContext, scopes ...string) (
 		return nil, fmt.Errorf("failed to get integration secrets: %w", err)
 	}
 
-	authMethod := authMethodFromMetadata(ctx.GetMetadata())
+	authMethod := AuthMethodFromMetadata(ctx.GetMetadata())
 
-	keyJSON := findSecretValue(secrets, SecretNameServiceAccountKey)
+	keyJSON := FindSecretValue(secrets, SecretNameServiceAccountKey)
 	if authMethod != AuthMethodWIF && len(keyJSON) > 0 {
 		if len(scopes) == 0 {
-			scopes = []string{scopeCloudPlatform}
+			scopes = []string{ScopeCloudPlatform}
 		}
 		creds, err := google.CredentialsFromJSONWithType(context.Background(), keyJSON, google.ServiceAccount, scopes...)
 		if err != nil {
@@ -49,7 +36,7 @@ func TokenSourceFromIntegration(ctx core.IntegrationContext, scopes ...string) (
 		return creds.TokenSource, nil
 	}
 
-	accessToken := findSecretValue(secrets, SecretNameAccessToken)
+	accessToken := FindSecretValue(secrets, SecretNameAccessToken)
 	if authMethod != AuthMethodWIF || len(accessToken) == 0 {
 		return nil, fmt.Errorf("no GCP credentials found: add a service account key or use Workload Identity Federation and resync")
 	}
@@ -93,7 +80,7 @@ func CredentialsFromIntegration(ctx core.IntegrationContext, scopes ...string) (
 	return &google.Credentials{TokenSource: ts}, nil
 }
 
-func findSecretValue(secrets []core.IntegrationSecret, name string) []byte {
+func FindSecretValue(secrets []core.IntegrationSecret, name string) []byte {
 	for _, s := range secrets {
 		if s.Name == name {
 			return s.Value
@@ -102,7 +89,7 @@ func findSecretValue(secrets []core.IntegrationSecret, name string) []byte {
 	return nil
 }
 
-func authMethodFromMetadata(meta any) string {
+func AuthMethodFromMetadata(meta any) string {
 	if meta == nil {
 		return AuthMethodServiceAccountKey
 	}

@@ -1,4 +1,4 @@
-package gcp
+package common
 
 import (
 	"errors"
@@ -8,10 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func Test_parseGCPError(t *testing.T) {
+func Test_ParseGCPError(t *testing.T) {
 	t.Run("uses API error message when present", func(t *testing.T) {
 		body := []byte(`{"error":{"code":404,"message":"Not found","status":"NOT_FOUND"}}`)
-		err := parseGCPError(404, body)
+		err := ParseGCPError(404, body)
 		require.Error(t, err)
 		var apiErr *GCPAPIError
 		require.True(t, errors.As(err, &apiErr))
@@ -21,7 +21,7 @@ func Test_parseGCPError(t *testing.T) {
 
 	t.Run("falls back to raw body when not JSON", func(t *testing.T) {
 		body := []byte("plain text error")
-		err := parseGCPError(500, body)
+		err := ParseGCPError(500, body)
 		require.Error(t, err)
 		var apiErr *GCPAPIError
 		require.True(t, errors.As(err, &apiErr))
@@ -31,7 +31,7 @@ func Test_parseGCPError(t *testing.T) {
 
 	t.Run("empty error message uses body", func(t *testing.T) {
 		body := []byte(`{"error":{}}`)
-		err := parseGCPError(403, body)
+		err := ParseGCPError(403, body)
 		require.Error(t, err)
 		var apiErr *GCPAPIError
 		require.True(t, errors.As(err, &apiErr))

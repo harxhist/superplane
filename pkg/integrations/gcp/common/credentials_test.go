@@ -1,4 +1,4 @@
-package gcp
+package common
 
 import (
 	"testing"
@@ -10,23 +10,23 @@ import (
 	"github.com/superplanehq/superplane/test/support/contexts"
 )
 
-func Test_findSecretValue(t *testing.T) {
+func Test_FindSecretValue(t *testing.T) {
 	secrets := []core.IntegrationSecret{
 		{Name: "other", Value: []byte("x")},
 		{Name: SecretNameAccessToken, Value: []byte("my-token")},
 		{Name: SecretNameServiceAccountKey, Value: []byte("key-json")},
 	}
-	assert.Nil(t, findSecretValue(secrets, "missing"))
-	assert.Equal(t, []byte("my-token"), findSecretValue(secrets, SecretNameAccessToken))
-	assert.Equal(t, []byte("key-json"), findSecretValue(secrets, SecretNameServiceAccountKey))
-	assert.Nil(t, findSecretValue(nil, SecretNameAccessToken))
+	assert.Nil(t, FindSecretValue(secrets, "missing"))
+	assert.Equal(t, []byte("my-token"), FindSecretValue(secrets, SecretNameAccessToken))
+	assert.Equal(t, []byte("key-json"), FindSecretValue(secrets, SecretNameServiceAccountKey))
+	assert.Nil(t, FindSecretValue(nil, SecretNameAccessToken))
 }
 
-func Test_authMethodFromMetadata(t *testing.T) {
-	assert.Equal(t, AuthMethodServiceAccountKey, authMethodFromMetadata(nil))
-	assert.Equal(t, AuthMethodServiceAccountKey, authMethodFromMetadata(map[string]any{}))
-	assert.Equal(t, AuthMethodServiceAccountKey, authMethodFromMetadata(map[string]any{"authMethod": "other"}))
-	assert.Equal(t, AuthMethodWIF, authMethodFromMetadata(map[string]any{"authMethod": AuthMethodWIF}))
+func Test_AuthMethodFromMetadata(t *testing.T) {
+	assert.Equal(t, AuthMethodServiceAccountKey, AuthMethodFromMetadata(nil))
+	assert.Equal(t, AuthMethodServiceAccountKey, AuthMethodFromMetadata(map[string]any{}))
+	assert.Equal(t, AuthMethodServiceAccountKey, AuthMethodFromMetadata(map[string]any{"authMethod": "other"}))
+	assert.Equal(t, AuthMethodWIF, AuthMethodFromMetadata(map[string]any{"authMethod": AuthMethodWIF}))
 }
 
 func Test_TokenSourceFromIntegration(t *testing.T) {

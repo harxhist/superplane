@@ -1,4 +1,4 @@
-package gcp
+package common
 
 import (
 	"bytes"
@@ -89,7 +89,7 @@ func (c *Client) ExecRequest(ctx context.Context, method, url string, body io.Re
 	}
 
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
-		return nil, parseGCPError(res.StatusCode, responseBody)
+		return nil, ParseGCPError(res.StatusCode, responseBody)
 	}
 	return responseBody, nil
 }
@@ -116,30 +116,4 @@ func (c *Client) Post(ctx context.Context, path string, body any) ([]byte, error
 		bodyReader = bytes.NewReader(b)
 	}
 	return c.ExecRequest(ctx, http.MethodPost, url, bodyReader)
-}
-
-type gcpErrorResponse struct {
-	Error struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-		Status  string `json:"status"`
-	} `json:"error"`
-}
-
-type GCPAPIError struct {
-	StatusCode int
-	Message    string
-}
-
-func (e *GCPAPIError) Error() string {
-	return fmt.Sprintf("GCP request failed (%d): %s", e.StatusCode, e.Message)
-}
-
-func parseGCPError(statusCode int, body []byte) error {
-	var apiErr gcpErrorResponse
-	message := strings.TrimSpace(string(body))
-	if err := json.Unmarshal(body, &apiErr); err == nil && apiErr.Error.Message != "" {
-		message = apiErr.Error.Message
-	}
-	return &GCPAPIError{StatusCode: statusCode, Message: message}
 }

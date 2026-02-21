@@ -1,4 +1,4 @@
-package createvm
+package compute
 
 import (
 	"testing"

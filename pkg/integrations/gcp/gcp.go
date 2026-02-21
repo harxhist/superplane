@@ -12,8 +12,8 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/superplanehq/superplane/pkg/configuration"
 	"github.com/superplanehq/superplane/pkg/core"
-	createvm "github.com/superplanehq/superplane/pkg/integrations/gcp/create_vm"
-	onvmcreate "github.com/superplanehq/superplane/pkg/integrations/gcp/on_vm_created"
+	gcpcommon "github.com/superplanehq/superplane/pkg/integrations/gcp/common"
+	"github.com/superplanehq/superplane/pkg/integrations/gcp/compute"
 	"github.com/superplanehq/superplane/pkg/registry"
 )
 
@@ -24,8 +24,8 @@ const (
 
 func init() {
 	registry.RegisterIntegrationWithWebhookHandler("gcp", &GCP{}, &WebhookHandler{})
-	createvm.SetClientFactory(func(ctx core.ExecutionContext) (createvm.Client, error) {
-		return NewClient(ctx.HTTP, ctx.Integration)
+	compute.SetClientFactory(func(ctx core.ExecutionContext) (compute.Client, error) {
+		return gcpcommon.NewClient(ctx.HTTP, ctx.Integration)
 	})
 }
 
@@ -41,13 +41,6 @@ type Configuration struct {
 	ServiceAccountKey         string `json:"serviceAccountKey" mapstructure:"serviceAccountKey"`
 	WorkloadIdentityProvider  string `json:"workloadIdentityProvider" mapstructure:"workloadIdentityProvider"`
 	WorkloadIdentityProjectID string `json:"workloadIdentityProjectId" mapstructure:"workloadIdentityProjectId"`
-}
-
-type Metadata struct {
-	ProjectID            string `json:"projectId"`
-	ClientEmail          string `json:"clientEmail"`
-	AuthMethod           string `json:"authMethod"`
-	AccessTokenExpiresAt string `json:"accessTokenExpiresAt"`
 }
 
 func (g *GCP) Name() string {
@@ -144,13 +137,13 @@ func (g *GCP) Configuration() []configuration.Field {
 
 func (g *GCP) Components() []core.Component {
 	return []core.Component{
-		&createvm.CreateVM{},
+		&compute.CreateVM{},
 	}
 }
 
 func (g *GCP) Triggers() []core.Trigger {
 	return []core.Trigger{
-		&onvmcreate.OnVMCreated{},
+		&compute.OnVMCreated{},
 	}
 }
 
@@ -193,7 +186,7 @@ func (g *GCP) syncWIF(ctx core.SyncContext, config Configuration) error {
 		return fmt.Errorf("Workload Identity Federation token exchange failed. Ensure your SuperPlane instance URL is set as the OIDC issuer in GCP, the audience matches the provider resource name, and the URL is reachable by Google: %w", err)
 	}
 
-	if err := ctx.Integration.SetSecret(SecretNameAccessToken, []byte(accessToken)); err != nil {
+	if err := ctx.Integration.SetSecret(gcpcommon.SecretNameAccessToken, []byte(accessToken)); err != nil {
 		return fmt.Errorf("failed to store access token: %w", err)
 	}
 
@@ -203,15 +196,15 @@ func (g *GCP) syncWIF(ctx core.SyncContext, config Configuration) error {
 		refreshAfter = time.Minute
 	}
 
-	metadata := Metadata{
+	metadata := gcpcommon.Metadata{
 		ProjectID:            projectID,
 		ClientEmail:          "",
-		AuthMethod:           AuthMethodWIF,
+		AuthMethod:           gcpcommon.AuthMethodWIF,
 		AccessTokenExpiresAt: expiresAt.Format(time.RFC3339),
 	}
 	ctx.Integration.SetMetadata(metadata)
 
-	client, err := NewClient(ctx.HTTP, ctx.Integration)
+	client, err := gcpcommon.NewClient(ctx.HTTP, ctx.Integration)
 	if err != nil {
 		return fmt.Errorf("failed to create GCP client after token exchange: %w", err)
 	}
@@ -240,14 +233,14 @@ func (g *GCP) syncServiceAccountKey(ctx core.SyncContext, config Configuration) 
 	if err != nil {
 		return fmt.Errorf("invalid service account key: %w", err)
 	}
-	metadata.AuthMethod = AuthMethodServiceAccountKey
+	metadata.AuthMethod = gcpcommon.AuthMethodServiceAccountKey
 
-	if err := ctx.Integration.SetSecret(SecretNameServiceAccountKey, keyJSON); err != nil {
+	if err := ctx.Integration.SetSecret(gcpcommon.SecretNameServiceAccountKey, keyJSON); err != nil {
 		return fmt.Errorf("failed to store service account key: %w", err)
 	}
 
 	ctx.Integration.SetMetadata(metadata)
-	client, err := NewClient(ctx.HTTP, ctx.Integration)
+	client, err := gcpcommon.NewClient(ctx.HTTP, ctx.Integration)
 	if err != nil {
 		return fmt.Errorf("failed to create GCP client: %w", err)
 	}
@@ -261,22 +254,22 @@ func (g *GCP) syncServiceAccountKey(ctx core.SyncContext, config Configuration) 
 	return nil
 }
 
-func validateAndParseServiceAccountKey(keyJSON []byte) (Metadata, error) {
+func validateAndParseServiceAccountKey(keyJSON []byte) (gcpcommon.Metadata, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(keyJSON, &raw); err != nil {
-		return Metadata{}, fmt.Errorf("invalid JSON: %w", err)
+		return gcpcommon.Metadata{}, fmt.Errorf("invalid JSON: %w", err)
 	}
 
-	for _, k := range RequiredJSONKeys {
+	for _, k := range gcpcommon.RequiredJSONKeys {
 		if _, ok := raw[k]; !ok {
-			return Metadata{}, fmt.Errorf("missing required field %q in service account key", k)
+			return gcpcommon.Metadata{}, fmt.Errorf("missing required field %q in service account key", k)
 		}
 	}
 
 	projectID, _ := raw["project_id"].(string)
 	clientEmail, _ := raw["client_email"].(string)
 
-	return Metadata{
+	return gcpcommon.Metadata{
 		ProjectID:   strings.TrimSpace(projectID),
 		ClientEmail: strings.TrimSpace(clientEmail),
 	}, nil
@@ -299,71 +292,71 @@ func trimmedParam(params map[string]string, key string) string {
 }
 
 func (g *GCP) ListResources(resourceType string, ctx core.ListResourcesContext) ([]core.IntegrationResource, error) {
-	client, err := NewClient(ctx.HTTP, ctx.Integration)
+	client, err := gcpcommon.NewClient(ctx.HTTP, ctx.Integration)
 	if err != nil {
 		return nil, err
 	}
 	reqCtx := context.Background()
 
 	switch resourceType {
-	case createvm.ResourceTypeRegion:
-		return createvm.ListRegionResources(reqCtx, client)
-	case createvm.ResourceTypeZone:
-		return createvm.ListZoneResources(reqCtx, client, ctx.Parameters["region"])
-	case createvm.ResourceTypeMachineFamily:
+	case compute.ResourceTypeRegion:
+		return compute.ListRegionResources(reqCtx, client)
+	case compute.ResourceTypeZone:
+		return compute.ListZoneResources(reqCtx, client, ctx.Parameters["region"])
+	case compute.ResourceTypeMachineFamily:
 		zone := trimmedParam(ctx.Parameters, "zone")
 		if zone == "" {
 			return []core.IntegrationResource{}, nil
 		}
-		return createvm.ListMachineFamilyResources(reqCtx, client, zone)
-	case createvm.ResourceTypeMachineType:
+		return compute.ListMachineFamilyResources(reqCtx, client, zone)
+	case compute.ResourceTypeMachineType:
 		zone := trimmedParam(ctx.Parameters, "zone")
 		if zone == "" {
 			return []core.IntegrationResource{}, nil
 		}
 		machineFamily := trimmedParam(ctx.Parameters, "machineFamily")
-		return createvm.ListMachineTypeResources(reqCtx, client, zone, machineFamily)
-	case createvm.ResourceTypePublicImages:
-		return createvm.ListPublicImageResources(reqCtx, client, ctx.Parameters["project"])
-	case createvm.ResourceTypeCustomImages:
-		return createvm.ListCustomImageResources(reqCtx, client, ctx.Parameters["project"])
-	case createvm.ResourceTypeSnapshots:
-		return createvm.ListSnapshotResources(reqCtx, client, ctx.Parameters["project"])
-	case createvm.ResourceTypeDisks:
+		return compute.ListMachineTypeResources(reqCtx, client, zone, machineFamily)
+	case compute.ResourceTypePublicImages:
+		return compute.ListPublicImageResources(reqCtx, client, ctx.Parameters["project"])
+	case compute.ResourceTypeCustomImages:
+		return compute.ListCustomImageResources(reqCtx, client, ctx.Parameters["project"])
+	case compute.ResourceTypeSnapshots:
+		return compute.ListSnapshotResources(reqCtx, client, ctx.Parameters["project"])
+	case compute.ResourceTypeDisks:
 		zone := trimmedParam(ctx.Parameters, "zone")
 		if zone == "" {
 			return []core.IntegrationResource{}, nil
 		}
-		return createvm.ListDiskResources(reqCtx, client, ctx.Parameters["project"], zone)
-	case createvm.ResourceTypeDiskTypes:
+		return compute.ListDiskResources(reqCtx, client, ctx.Parameters["project"], zone)
+	case compute.ResourceTypeDiskTypes:
 		zone := trimmedParam(ctx.Parameters, "zone")
 		if zone == "" {
 			return []core.IntegrationResource{}, nil
 		}
 		bootDiskOnly := ctx.Parameters["bootDiskOnly"] == "true"
-		return createvm.ListDiskTypeResources(reqCtx, client, ctx.Parameters["project"], zone, bootDiskOnly)
-	case createvm.ResourceTypeSnapshotSchedules:
+		return compute.ListDiskTypeResources(reqCtx, client, ctx.Parameters["project"], zone, bootDiskOnly)
+	case compute.ResourceTypeSnapshotSchedules:
 		region := trimmedParam(ctx.Parameters, "region")
 		if region == "" {
 			return []core.IntegrationResource{}, nil
 		}
-		return createvm.ListSnapshotScheduleResources(reqCtx, client, ctx.Parameters["project"], region)
-	case createvm.ResourceTypeNetwork:
-		return createvm.ListNetworkResources(reqCtx, client, ctx.Parameters["project"])
-	case createvm.ResourceTypeSubnetwork:
+		return compute.ListSnapshotScheduleResources(reqCtx, client, ctx.Parameters["project"], region)
+	case compute.ResourceTypeNetwork:
+		return compute.ListNetworkResources(reqCtx, client, ctx.Parameters["project"])
+	case compute.ResourceTypeSubnetwork:
 		region := trimmedParam(ctx.Parameters, "region")
 		if region == "" {
 			return []core.IntegrationResource{}, nil
 		}
-		return createvm.ListSubnetworkResources(reqCtx, client, ctx.Parameters["project"], region)
-	case createvm.ResourceTypeAddress:
+		return compute.ListSubnetworkResources(reqCtx, client, ctx.Parameters["project"], region)
+	case compute.ResourceTypeAddress:
 		region := trimmedParam(ctx.Parameters, "region")
 		if region == "" {
 			return []core.IntegrationResource{}, nil
 		}
-		return createvm.ListAddressResources(reqCtx, client, ctx.Parameters["project"], region)
-	case createvm.ResourceTypeFirewall:
-		resources, err := createvm.ListFirewallResources(reqCtx, client, ctx.Parameters["project"])
+		return compute.ListAddressResources(reqCtx, client, ctx.Parameters["project"], region)
+	case compute.ResourceTypeFirewall:
+		resources, err := compute.ListFirewallResources(reqCtx, client, ctx.Parameters["project"])
 		if err != nil {
 			ctx.Logger.WithError(err).WithField("project", ctx.Parameters["project"]).Error("list firewall resources failed; returning empty list")
 			return []core.IntegrationResource{}, nil
@@ -384,7 +377,7 @@ func (g *GCP) HandleRequest(ctx core.HTTPRequestContext) {
 		path = ctx.Request.URL.Path
 	}
 
-	client, err := NewClient(ctx.HTTP, ctx.Integration)
+	client, err := gcpcommon.NewClient(ctx.HTTP, ctx.Integration)
 	if err != nil {
 		writeJSONError(ctx, http.StatusBadRequest, err.Error())
 		return
@@ -452,8 +445,8 @@ func pathSuffixAfter(path, prefix string) (suffix string, found bool) {
 	return suffix, suffix != ""
 }
 
-func (g *GCP) handleListRegions(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
-	list, err := createvm.ListRegions(reqCtx, c)
+func (g *GCP) handleListRegions(reqCtx context.Context, ctx core.HTTPRequestContext, c compute.Client) {
+	list, err := compute.ListRegions(reqCtx, c)
 	if err != nil {
 		writeGCPError(ctx, err)
 		return
@@ -461,9 +454,9 @@ func (g *GCP) handleListRegions(reqCtx context.Context, ctx core.HTTPRequestCont
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListZones(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
+func (g *GCP) handleListZones(reqCtx context.Context, ctx core.HTTPRequestContext, c compute.Client) {
 	region := ctx.Request.URL.Query().Get("region")
-	list, err := createvm.ListZones(reqCtx, c, region)
+	list, err := compute.ListZones(reqCtx, c, region)
 	if err != nil {
 		writeGCPError(ctx, err)
 		return
@@ -471,12 +464,12 @@ func (g *GCP) handleListZones(reqCtx context.Context, ctx core.HTTPRequestContex
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListMachineTypes(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
+func (g *GCP) handleListMachineTypes(reqCtx context.Context, ctx core.HTTPRequestContext, c compute.Client) {
 	zone, ok := requireQueryParam(ctx, "zone", "")
 	if !ok {
 		return
 	}
-	list, err := createvm.ListMachineTypes(reqCtx, c, zone)
+	list, err := compute.ListMachineTypes(reqCtx, c, zone)
 	if err != nil {
 		writeGCPError(ctx, err)
 		return
@@ -484,7 +477,7 @@ func (g *GCP) handleListMachineTypes(reqCtx context.Context, ctx core.HTTPReques
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleGetMachineType(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client, path string) {
+func (g *GCP) handleGetMachineType(reqCtx context.Context, ctx core.HTTPRequestContext, c compute.Client, path string) {
 	zone, ok := requireQueryParam(ctx, "zone", "")
 	if !ok {
 		return
@@ -494,7 +487,7 @@ func (g *GCP) handleGetMachineType(reqCtx context.Context, ctx core.HTTPRequestC
 		ctx.Response.WriteHeader(http.StatusNotFound)
 		return
 	}
-	mt, err := createvm.GetMachineType(reqCtx, c, zone, machineType)
+	mt, err := compute.GetMachineType(reqCtx, c, zone, machineType)
 	if err != nil {
 		writeGCPError(ctx, err)
 		return
@@ -502,12 +495,12 @@ func (g *GCP) handleGetMachineType(reqCtx context.Context, ctx core.HTTPRequestC
 	writeJSON(ctx, http.StatusOK, mt)
 }
 
-func (g *GCP) handleListMachineFamilies(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
+func (g *GCP) handleListMachineFamilies(reqCtx context.Context, ctx core.HTTPRequestContext, c compute.Client) {
 	zone, ok := requireQueryParam(ctx, "zone", "")
 	if !ok {
 		return
 	}
-	list, err := createvm.ListMachineFamilies(reqCtx, c, zone)
+	list, err := compute.ListMachineFamilies(reqCtx, c, zone)
 	if err != nil {
 		writeGCPError(ctx, err)
 		return
@@ -519,14 +512,14 @@ func (g *GCP) handleProvisioningModels(ctx core.HTTPRequestContext) {
 	writeJSON(ctx, http.StatusOK, []struct {
 		Value string `json:"value"`
 	}{
-		{Value: string(createvm.ProvisioningStandard)},
-		{Value: string(createvm.ProvisioningSpot)},
+		{Value: string(compute.ProvisioningStandard)},
+		{Value: string(compute.ProvisioningSpot)},
 	})
 }
 
-func (g *GCP) handleListPublicImages(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
+func (g *GCP) handleListPublicImages(reqCtx context.Context, ctx core.HTTPRequestContext, c compute.Client) {
 	project := ctx.Request.URL.Query().Get("project")
-	list, err := createvm.ListPublicImages(reqCtx, c, project)
+	list, err := compute.ListPublicImages(reqCtx, c, project)
 	if err != nil {
 		writeGCPError(ctx, err)
 		return
@@ -534,14 +527,14 @@ func (g *GCP) handleListPublicImages(reqCtx context.Context, ctx core.HTTPReques
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleGetImageFromFamily(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client, path string) {
+func (g *GCP) handleGetImageFromFamily(reqCtx context.Context, ctx core.HTTPRequestContext, c compute.Client, path string) {
 	project := ctx.Request.URL.Query().Get("project")
 	family, found := pathSuffixAfter(path, pathPrefixImageFamily)
 	if !found {
 		ctx.Response.WriteHeader(http.StatusNotFound)
 		return
 	}
-	img, err := createvm.GetImageFromFamily(reqCtx, c, project, family)
+	img, err := compute.GetImageFromFamily(reqCtx, c, project, family)
 	if err != nil {
 		writeGCPError(ctx, err)
 		return
@@ -549,9 +542,9 @@ func (g *GCP) handleGetImageFromFamily(reqCtx context.Context, ctx core.HTTPRequ
 	writeJSON(ctx, http.StatusOK, img)
 }
 
-func (g *GCP) handleListCustomImages(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
+func (g *GCP) handleListCustomImages(reqCtx context.Context, ctx core.HTTPRequestContext, c compute.Client) {
 	project := ctx.Request.URL.Query().Get("project")
-	list, err := createvm.ListCustomImages(reqCtx, c, project)
+	list, err := compute.ListCustomImages(reqCtx, c, project)
 	if err != nil {
 		writeGCPError(ctx, err)
 		return
@@ -559,9 +552,9 @@ func (g *GCP) handleListCustomImages(reqCtx context.Context, ctx core.HTTPReques
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListSnapshots(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
+func (g *GCP) handleListSnapshots(reqCtx context.Context, ctx core.HTTPRequestContext, c compute.Client) {
 	project := ctx.Request.URL.Query().Get("project")
-	list, err := createvm.ListSnapshots(reqCtx, c, project)
+	list, err := compute.ListSnapshots(reqCtx, c, project)
 	if err != nil {
 		writeGCPError(ctx, err)
 		return
@@ -569,13 +562,13 @@ func (g *GCP) handleListSnapshots(reqCtx context.Context, ctx core.HTTPRequestCo
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListDisks(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
+func (g *GCP) handleListDisks(reqCtx context.Context, ctx core.HTTPRequestContext, c compute.Client) {
 	zone, ok := requireQueryParam(ctx, "zone", "")
 	if !ok {
 		return
 	}
 	project := ctx.Request.URL.Query().Get("project")
-	list, err := createvm.ListDisks(reqCtx, c, project, zone)
+	list, err := compute.ListDisks(reqCtx, c, project, zone)
 	if err != nil {
 		writeGCPError(ctx, err)
 		return
@@ -583,13 +576,13 @@ func (g *GCP) handleListDisks(reqCtx context.Context, ctx core.HTTPRequestContex
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListDiskTypes(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
+func (g *GCP) handleListDiskTypes(reqCtx context.Context, ctx core.HTTPRequestContext, c compute.Client) {
 	zone, ok := requireQueryParam(ctx, "zone", "")
 	if !ok {
 		return
 	}
 	project := ctx.Request.URL.Query().Get("project")
-	list, err := createvm.ListDiskTypes(reqCtx, c, project, zone)
+	list, err := compute.ListDiskTypes(reqCtx, c, project, zone)
 	if err != nil {
 		writeGCPError(ctx, err)
 		return
@@ -597,13 +590,13 @@ func (g *GCP) handleListDiskTypes(reqCtx context.Context, ctx core.HTTPRequestCo
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListSnapshotSchedules(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
+func (g *GCP) handleListSnapshotSchedules(reqCtx context.Context, ctx core.HTTPRequestContext, c compute.Client) {
 	region, ok := requireQueryParam(ctx, "region", "")
 	if !ok {
 		return
 	}
 	project := ctx.Request.URL.Query().Get("project")
-	list, err := createvm.ListSnapshotSchedules(reqCtx, c, project, region)
+	list, err := compute.ListSnapshotSchedules(reqCtx, c, project, region)
 	if err != nil {
 		writeGCPError(ctx, err)
 		return
@@ -611,9 +604,9 @@ func (g *GCP) handleListSnapshotSchedules(reqCtx context.Context, ctx core.HTTPR
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListNetworks(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
+func (g *GCP) handleListNetworks(reqCtx context.Context, ctx core.HTTPRequestContext, c compute.Client) {
 	project := ctx.Request.URL.Query().Get("project")
-	list, err := createvm.ListNetworks(reqCtx, c, project)
+	list, err := compute.ListNetworks(reqCtx, c, project)
 	if err != nil {
 		writeGCPError(ctx, err)
 		return
@@ -621,13 +614,13 @@ func (g *GCP) handleListNetworks(reqCtx context.Context, ctx core.HTTPRequestCon
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListSubnetworks(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
+func (g *GCP) handleListSubnetworks(reqCtx context.Context, ctx core.HTTPRequestContext, c compute.Client) {
 	region, ok := requireQueryParam(ctx, "region", "")
 	if !ok {
 		return
 	}
 	project := ctx.Request.URL.Query().Get("project")
-	list, err := createvm.ListSubnetworks(reqCtx, c, project, region)
+	list, err := compute.ListSubnetworks(reqCtx, c, project, region)
 	if err != nil {
 		writeGCPError(ctx, err)
 		return
@@ -635,13 +628,13 @@ func (g *GCP) handleListSubnetworks(reqCtx context.Context, ctx core.HTTPRequest
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListAddresses(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
+func (g *GCP) handleListAddresses(reqCtx context.Context, ctx core.HTTPRequestContext, c compute.Client) {
 	region, ok := requireQueryParam(ctx, "region", "")
 	if !ok {
 		return
 	}
 	project := ctx.Request.URL.Query().Get("project")
-	list, err := createvm.ListAddresses(reqCtx, c, project, region)
+	list, err := compute.ListAddresses(reqCtx, c, project, region)
 	if err != nil {
 		writeGCPError(ctx, err)
 		return
@@ -649,9 +642,9 @@ func (g *GCP) handleListAddresses(reqCtx context.Context, ctx core.HTTPRequestCo
 	writeJSON(ctx, http.StatusOK, list)
 }
 
-func (g *GCP) handleListFirewalls(reqCtx context.Context, ctx core.HTTPRequestContext, c createvm.Client) {
+func (g *GCP) handleListFirewalls(reqCtx context.Context, ctx core.HTTPRequestContext, c compute.Client) {
 	project := ctx.Request.URL.Query().Get("project")
-	list, err := createvm.ListFirewalls(reqCtx, c, project)
+	list, err := compute.ListFirewalls(reqCtx, c, project)
 	if err != nil {
 		writeGCPError(ctx, err)
 		return
@@ -675,7 +668,7 @@ func writeJSONError(ctx core.HTTPRequestContext, status int, message string) {
 }
 
 func writeGCPError(ctx core.HTTPRequestContext, err error) {
-	var apiErr *GCPAPIError
+	var apiErr *gcpcommon.GCPAPIError
 	if errors.As(err, &apiErr) {
 		status := apiErr.StatusCode
 		message := apiErr.Message

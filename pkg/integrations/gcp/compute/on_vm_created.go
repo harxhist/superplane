@@ -1,4 +1,4 @@
-package onvmcreate
+package compute
 
 import (
 	"encoding/json"
