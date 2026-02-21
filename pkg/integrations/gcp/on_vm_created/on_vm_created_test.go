@@ -1,7 +1,6 @@
 package onvmcreate
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -17,7 +16,7 @@ func Test_OnVMCreated_Metadata(t *testing.T) {
 	trigger := &OnVMCreated{}
 	assert.Equal(t, "gcp.onVMCreated", trigger.Name())
 	assert.Equal(t, "On VM Created", trigger.Label())
-	assert.Equal(t, "Emits when a new Compute Engine VM is created (provisioning succeeded). Trigger uses a Cloud Logging sink to Pub/Sub and emits the VM creation payload to start SuperPlane workflow executions.", trigger.Description())
+	assert.Equal(t, "Emits when a new Compute Engine VM is created (provisioning succeeded). Trigger uses Eventarc Advanced to route audit log events to SuperPlane via an HTTPS pipeline.", trigger.Description())
 	assert.NotEmpty(t, trigger.Documentation())
 	assert.Equal(t, "gcp", trigger.Icon())
 	assert.Equal(t, "gray", trigger.Color())
@@ -45,50 +44,12 @@ func Test_OnVMCreated_ExampleData(t *testing.T) {
 	assert.Equal(t, "projects/my-project/zones/us-central1-a/instances/my-vm", data["resourceName"])
 }
 
-func Test_resolvePayloadBytes(t *testing.T) {
-	t.Run("raw JSON returns body as-is", func(t *testing.T) {
-		body := []byte(`{"type":"some-event"}`)
-		out, err := resolvePayloadBytes(body)
-		require.NoError(t, err)
-		assert.Equal(t, body, out)
-	})
-
-	t.Run("non-PubSub JSON returns body as-is", func(t *testing.T) {
-		body := []byte(`{"not":"a pubsub envelope"}`)
-		out, err := resolvePayloadBytes(body)
-		require.NoError(t, err)
-		assert.Equal(t, body, out)
-	})
-
-	t.Run("PubSub envelope with empty message.data returns body as-is", func(t *testing.T) {
-		body := []byte(`{"message":{},"subscription":"sub"}`)
-		out, err := resolvePayloadBytes(body)
-		require.NoError(t, err)
-		assert.Equal(t, body, out)
-	})
-
-	t.Run("PubSub envelope with base64 message.data decodes", func(t *testing.T) {
-		inner := []byte(`{"type":"cloud.event"}`)
-		encoded := base64.StdEncoding.EncodeToString(inner)
-		body, _ := json.Marshal(map[string]any{
-			"message":      map[string]any{"data": encoded},
-			"subscription": "sub",
-		})
-		out, err := resolvePayloadBytes(body)
-		require.NoError(t, err)
-		assert.Equal(t, inner, out)
-	})
-
-	t.Run("invalid base64 in message.data returns error", func(t *testing.T) {
-		body, _ := json.Marshal(map[string]any{
-			"message":      map[string]any{"data": "not-valid-base64!!"},
-			"subscription": "sub",
-		})
-		out, err := resolvePayloadBytes(body)
-		require.Error(t, err)
-		assert.Nil(t, out)
-		assert.Contains(t, err.Error(), "base64")
-	})
+func Test_OnVMCreated_CelFilter(t *testing.T) {
+	assert.Contains(t, CelFilter, "google.cloud.audit.log.v1.written")
+	assert.Contains(t, CelFilter, "compute.googleapis.com")
+	assert.Contains(t, CelFilter, "v1.compute.instances.insert")
+	assert.Contains(t, CelFilter, "beta.compute.instances.insert")
+	assert.Contains(t, CelFilter, "compute.instances.insert")
 }
 
 func Test_isCompletionEvent(t *testing.T) {
@@ -305,21 +266,38 @@ func Test_OnVMCreated_HandleWebhook(t *testing.T) {
 		assert.Equal(t, EmittedEventType, events.Payloads[0].Type)
 	})
 
-	t.Run("PubSub push envelope decodes and processes", func(t *testing.T) {
+	t.Run("beta method name emits", func(t *testing.T) {
 		events := &contexts.EventContext{}
-		inner := mustJSON(t, map[string]any{
+		body := mustJSON(t, map[string]any{
 			"type":         auditLogEventType,
 			"serviceName":  computeServiceName,
-			"methodName":   instancesInsertMethod,
+			"methodName":   instancesInsertMethodBeta,
 			"resourceName": "projects/p/zones/z/instances/vm1",
 			"data":         map[string]any{"operation": map[string]any{"last": true}},
 		})
-		envelope := mustJSON(t, map[string]any{
-			"message":      map[string]any{"data": base64.StdEncoding.EncodeToString(inner)},
-			"subscription": "projects/p/subscriptions/sub",
+		code, err := trigger.HandleWebhook(core.WebhookRequestContext{
+			Body:          body,
+			Configuration: map[string]any{},
+			Logger:        logger,
+			Events:        events,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, code)
+		require.Equal(t, 1, events.Count())
+		assert.Equal(t, EmittedEventType, events.Payloads[0].Type)
+	})
+
+	t.Run("short method name emits", func(t *testing.T) {
+		events := &contexts.EventContext{}
+		body := mustJSON(t, map[string]any{
+			"type":         auditLogEventType,
+			"serviceName":  computeServiceName,
+			"methodName":   instancesInsertMethodShort,
+			"resourceName": "projects/p/zones/z/instances/vm1",
+			"data":         map[string]any{"operation": map[string]any{"last": true}},
 		})
 		code, err := trigger.HandleWebhook(core.WebhookRequestContext{
-			Body:          envelope,
+			Body:          body,
 			Configuration: map[string]any{},
 			Logger:        logger,
 			Events:        events,

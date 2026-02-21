@@ -11,15 +11,23 @@ import (
 )
 
 const (
-	webhookMetadataTopicID        = "topicId"
-	webhookMetadataSubscriptionID = "subscriptionId"
-	webhookMetadataSinkID         = "sinkId"
-	resourceIDPrefix              = "sp-vm-"
+	webhookMetadataPipelineID   = "pipelineId"
+	webhookMetadataEnrollmentID = "enrollmentId"
+	webhookMetadataBusID        = "busId"
+	webhookMetadataSourceID     = "sourceId"
+
+	sharedBusPrefix    = "sp-bus-"
+	sharedSourcePrefix = "sp-src-"
+	pipelinePrefix     = "sp-pipe-"
+	enrollmentPrefix   = "sp-enrl-"
+
+	operationTimeout = 5 * time.Minute
 )
 
 type webhookConfig struct {
 	ProjectID string `mapstructure:"projectId"`
 	Region    string `mapstructure:"region"`
+	CelFilter string `mapstructure:"celFilter"`
 }
 
 type WebhookHandler struct{}
@@ -29,9 +37,18 @@ func (h *WebhookHandler) Setup(ctx core.WebhookHandlerContext) (any, error) {
 	if err := mapstructure.Decode(ctx.Webhook.GetConfiguration(), &config); err != nil {
 		return nil, fmt.Errorf("decode webhook configuration: %w", err)
 	}
+
 	projectID := strings.TrimSpace(config.ProjectID)
 	if projectID == "" {
-		return nil, fmt.Errorf("project ID is required for On VM Created webhook")
+		return nil, fmt.Errorf("project ID is required")
+	}
+	region := strings.TrimSpace(config.Region)
+	if region == "" {
+		region = "us-central1"
+	}
+	celFilter := strings.TrimSpace(config.CelFilter)
+	if celFilter == "" {
+		return nil, fmt.Errorf("CEL filter is required")
 	}
 
 	client, err := NewClient(ctx.HTTP, ctx.Integration)
@@ -39,43 +56,92 @@ func (h *WebhookHandler) Setup(ctx core.WebhookHandlerContext) (any, error) {
 		return nil, fmt.Errorf("create GCP client: %w", err)
 	}
 
-	webhookID := ctx.Webhook.GetID()
-	topicID := resourceIDPrefix + strings.ReplaceAll(webhookID, "-", "")
-	subscriptionID := topicID
-	sinkID := topicID
+	meta := ctx.Integration.GetMetadata()
+	var m Metadata
+	if err := mapstructure.Decode(meta, &m); err != nil {
+		return nil, fmt.Errorf("decode integration metadata: %w", err)
+	}
+	serviceAccountEmail := strings.TrimSpace(m.ClientEmail)
 
 	reqCtx := context.Background()
+	sanitizedProject := sanitizeID(projectID)
+	busID := sharedBusPrefix + sanitizedProject
+	sourceID := sharedSourcePrefix + sanitizedProject
 
-	if err := CreateTopic(reqCtx, client, projectID, topicID); err != nil {
-		return nil, fmt.Errorf("create Pub/Sub topic: %w", err)
+	webhookID := ctx.Webhook.GetID()
+	pipelineID := pipelinePrefix + strings.ReplaceAll(webhookID, "-", "")
+	enrollmentID := enrollmentPrefix + strings.ReplaceAll(webhookID, "-", "")
+
+	busFullName := MessageBusFullName(projectID, region, busID)
+	pipelineFullName := PipelineFullName(projectID, region, pipelineID)
+
+	if err := h.ensureSharedResources(reqCtx, client, projectID, region, busID, sourceID, busFullName); err != nil {
+		return nil, err
 	}
-	time.Sleep(2 * time.Second)
 
-	topicFullName := fmt.Sprintf("projects/%s/topics/%s", projectID, topicID)
-	writerIdentity, err := CreateVMCreatedSink(reqCtx, client, projectID, sinkID, topicFullName)
+	webhookURL := ctx.Webhook.GetURL()
+	pipelineOp, err := CreatePipeline(reqCtx, client, projectID, region, pipelineID, webhookURL, serviceAccountEmail)
 	if err != nil {
-		_ = DeleteTopic(reqCtx, client, projectID, topicID)
-		return nil, fmt.Errorf("create Logging sink: %w", err)
+		return nil, fmt.Errorf("create pipeline: %w", err)
+	}
+	if err := PollOperation(reqCtx, client, pipelineOp, operationTimeout); err != nil {
+		return nil, fmt.Errorf("wait for pipeline: %w", err)
 	}
 
-	if err := GrantTopicPublish(reqCtx, client, projectID, topicID, writerIdentity); err != nil {
-		_ = DeleteSink(reqCtx, client, projectID, sinkID)
-		_ = DeleteTopic(reqCtx, client, projectID, topicID)
-		return nil, fmt.Errorf("grant sink permission to publish to topic: %w", err)
+	enrollmentOp, err := CreateEnrollment(reqCtx, client, projectID, region, enrollmentID, busFullName, pipelineFullName, celFilter)
+	if err != nil {
+		_ = DeletePipeline(reqCtx, client, projectID, region, pipelineID)
+		return nil, fmt.Errorf("create enrollment: %w", err)
 	}
-
-	pushEndpoint := ctx.Webhook.GetURL()
-	if err := CreatePushSubscription(reqCtx, client, projectID, topicID, subscriptionID, pushEndpoint); err != nil {
-		_ = DeleteSink(reqCtx, client, projectID, sinkID)
-		_ = DeleteTopic(reqCtx, client, projectID, topicID)
-		return nil, fmt.Errorf("create push subscription: %w", err)
+	if err := PollOperation(reqCtx, client, enrollmentOp, operationTimeout); err != nil {
+		_ = DeletePipeline(reqCtx, client, projectID, region, pipelineID)
+		return nil, fmt.Errorf("wait for enrollment: %w", err)
 	}
 
 	return map[string]string{
-		webhookMetadataTopicID:        topicID,
-		webhookMetadataSubscriptionID: subscriptionID,
-		webhookMetadataSinkID:         sinkID,
+		webhookMetadataPipelineID:   pipelineID,
+		webhookMetadataEnrollmentID: enrollmentID,
+		webhookMetadataBusID:        busID,
+		webhookMetadataSourceID:     sourceID,
 	}, nil
+}
+
+func (h *WebhookHandler) ensureSharedResources(ctx context.Context, client *Client, projectID, region, busID, sourceID, busFullName string) error {
+	if err := GetMessageBus(ctx, client, projectID, region, busID); err != nil {
+		if !IsNotFoundError(err) {
+			return fmt.Errorf("check message bus: %w", err)
+		}
+
+		busOp, err := CreateMessageBus(ctx, client, projectID, region, busID)
+		if err != nil {
+			if !IsAlreadyExistsError(err) {
+				return fmt.Errorf("create message bus: %w", err)
+			}
+		} else {
+			if err := PollOperation(ctx, client, busOp, operationTimeout); err != nil {
+				return fmt.Errorf("wait for message bus: %w", err)
+			}
+		}
+	}
+
+	if err := GetGoogleAPISource(ctx, client, projectID, region, sourceID); err != nil {
+		if !IsNotFoundError(err) {
+			return fmt.Errorf("check google api source: %w", err)
+		}
+
+		sourceOp, err := CreateGoogleAPISource(ctx, client, projectID, region, sourceID, busFullName)
+		if err != nil {
+			if !IsAlreadyExistsError(err) {
+				return fmt.Errorf("create google api source: %w", err)
+			}
+		} else {
+			if err := PollOperation(ctx, client, sourceOp, operationTimeout); err != nil {
+				return fmt.Errorf("wait for google api source: %w", err)
+			}
+		}
+	}
+
+	return nil
 }
 
 func (h *WebhookHandler) Cleanup(ctx core.WebhookHandlerContext) error {
@@ -87,15 +153,16 @@ func (h *WebhookHandler) Cleanup(ctx core.WebhookHandlerContext) error {
 	if projectID == "" {
 		return nil
 	}
+	region := strings.TrimSpace(config.Region)
+	if region == "" {
+		region = "us-central1"
+	}
 
 	meta := ctx.Webhook.GetMetadata()
 	metaMap, _ := meta.(map[string]any)
 	if metaMap == nil {
 		return nil
 	}
-	subID := getMetaString(metaMap, webhookMetadataSubscriptionID)
-	sinkID := getMetaString(metaMap, webhookMetadataSinkID)
-	topicID := getMetaString(metaMap, webhookMetadataTopicID)
 
 	client, err := NewClient(ctx.HTTP, ctx.Integration)
 	if err != nil {
@@ -103,15 +170,13 @@ func (h *WebhookHandler) Cleanup(ctx core.WebhookHandlerContext) error {
 	}
 	reqCtx := context.Background()
 
-	if subID != "" {
-		_ = DeleteSubscription(reqCtx, client, projectID, subID)
+	if id := getMetaString(metaMap, webhookMetadataEnrollmentID); id != "" {
+		_ = DeleteEnrollment(reqCtx, client, projectID, region, id)
 	}
-	if sinkID != "" {
-		_ = DeleteSink(reqCtx, client, projectID, sinkID)
+	if id := getMetaString(metaMap, webhookMetadataPipelineID); id != "" {
+		_ = DeletePipeline(reqCtx, client, projectID, region, id)
 	}
-	if topicID != "" {
-		_ = DeleteTopic(reqCtx, client, projectID, topicID)
-	}
+
 	return nil
 }
 
@@ -124,7 +189,8 @@ func (h *WebhookHandler) CompareConfig(a, b any) (bool, error) {
 		return false, err
 	}
 	return strings.TrimSpace(ca.ProjectID) == strings.TrimSpace(cb.ProjectID) &&
-		strings.TrimSpace(ca.Region) == strings.TrimSpace(cb.Region), nil
+		strings.TrimSpace(ca.Region) == strings.TrimSpace(cb.Region) &&
+		strings.TrimSpace(ca.CelFilter) == strings.TrimSpace(cb.CelFilter), nil
 }
 
 func (h *WebhookHandler) Merge(current, requested any) (any, bool, error) {
@@ -138,4 +204,18 @@ func getMetaString(m map[string]any, key string) string {
 	}
 	s, _ := v.(string)
 	return s
+}
+
+func sanitizeID(s string) string {
+	var b strings.Builder
+	for _, c := range strings.ToLower(s) {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			b.WriteRune(c)
+		}
+	}
+	result := b.String()
+	if len(result) > 40 {
+		result = result[:40]
+	}
+	return result
 }

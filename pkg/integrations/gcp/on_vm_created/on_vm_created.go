@@ -1,7 +1,6 @@
 package onvmcreate
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -27,6 +26,9 @@ var vmInsertMethodNames = []string{
 	instancesInsertMethodShort,
 }
 
+// CelFilter is the Eventarc Advanced enrollment filter for VM creation events.
+const CelFilter = `message.type == "google.cloud.audit.log.v1.written" && message.serviceName == "compute.googleapis.com" && (message.methodName == "v1.compute.instances.insert" || message.methodName == "beta.compute.instances.insert" || message.methodName == "compute.instances.insert")`
+
 type auditLogOperation struct {
 	Last  bool `json:"last"`
 	First bool `json:"first"`
@@ -44,15 +46,6 @@ type EventPayload struct {
 	ResourceName    string         `json:"resourceName"`
 	Subject         string         `json:"subject"`
 	Data            map[string]any `json:"data"`
-}
-
-type pubSubPushEnvelope struct {
-	Message struct {
-		Data        string `json:"data"`
-		MessageID   string `json:"messageId"`
-		PublishTime string `json:"publishTime"`
-	} `json:"message"`
-	Subscription string `json:"subscription"`
 }
 
 type LogEntryDataPayload struct {
@@ -87,25 +80,25 @@ func (t *OnVMCreated) Label() string {
 }
 
 func (t *OnVMCreated) Description() string {
-	return "Emits when a new Compute Engine VM is created (provisioning succeeded). Trigger uses a Cloud Logging sink to Pub/Sub and emits the VM creation payload to start SuperPlane workflow executions."
+	return "Emits when a new Compute Engine VM is created (provisioning succeeded). Trigger uses Eventarc Advanced to route audit log events to SuperPlane via an HTTPS pipeline."
 }
 
 func (t *OnVMCreated) Documentation() string {
 	return "The On VM Created trigger starts a workflow execution when a new Compute Engine VM is created and provisioning has succeeded.\n\n" +
-		"**Trigger behavior:** The trigger uses a **Cloud Logging sink to Pub/Sub**: VM create audit logs are exported to a Pub/Sub topic and delivered to SuperPlane via a push subscription. No Eventarc or Cloud Run is used.\n\n" +
+		"**Trigger behavior:** The trigger uses **Eventarc Advanced**: a shared message bus receives all Google Cloud audit log events, and an enrollment filters for VM creation events and delivers them to SuperPlane via an HTTPS pipeline with OIDC authentication.\n\n" +
 		"## Use Cases\n\n" +
 		"- **Post-provisioning automation**: Run configuration, monitoring, or security setup after a VM is created\n" +
 		"- **Inventory and compliance**: Record new VMs or trigger audits\n" +
 		"- **Notifications**: Notify teams or systems when new VMs appear in a project or zone\n\n" +
 		"## Automatic setup\n\n" +
-		"When you set **Project ID** (and optionally **Region**), SuperPlane automatically creates a **Cloud Logging sink** that exports VM create audit logs to a **Pub/Sub** topic and a **push subscription** that sends events to this workflow. No manual sink or Pub/Sub setup is required.\n\n" +
-		"**Required GCP setup:** Enable the **Pub/Sub** and **Logging** APIs in your project and grant the integration's service account `roles/pubsub.admin` and `roles/logging.configWriter`.\n\n" +
+		"When you set **Project ID** (and optionally **Region**), SuperPlane automatically creates the Eventarc Advanced resources (message bus, Google API source, pipeline, and enrollment) needed to receive VM creation events. No manual setup is required.\n\n" +
+		"**Required GCP setup:** Enable the **Eventarc** API in your project and grant the integration's service account `roles/eventarc.developer` and `roles/iam.serviceAccountTokenCreator`.\n\n" +
 		"**Local testing:** Use ngrok (`ngrok http 8000`) and set `BASE_URL` and `WEBHOOKS_BASE_URL` to the ngrok HTTPS URL so GCP can reach the webhook.\n\n" +
 		"## Configuration\n\n" +
-		"- **Project ID**: Required. The GCP project where the log sink and Pub/Sub resources are created and where VM create events are received.\n" +
-		"- **Region**: Optional. Default: us-central1. Used for resource naming; audit logs are project-wide.\n\n" +
+		"- **Project ID**: Required. The GCP project where Eventarc resources are created and where VM create events are received.\n" +
+		"- **Region**: Optional. Default: us-central1. The region where Eventarc resources are provisioned.\n\n" +
 		"## Event Data\n\n" +
-		"Each event includes the full CloudEvents audit payload, including resourceName (e.g. projects/my-project/zones/us-central1-a/instances/my-vm), serviceName (compute.googleapis.com), methodName (v1.compute.instances.insert), and data (decoded audit log entry)."
+		"Each event includes the full CloudEvents audit payload, including resourceName (e.g. projects/my-project/zones/us-central1-a/instances/my-vm), serviceName (compute.googleapis.com), methodName (v1.compute.instances.insert), and data (audit log entry)."
 }
 
 func (t *OnVMCreated) Icon() string {
@@ -123,14 +116,14 @@ func (t *OnVMCreated) Configuration() []configuration.Field {
 			Label:       "Project ID",
 			Type:        configuration.FieldTypeString,
 			Required:    true,
-			Description: "GCP project where the webhook is registered and where VM create events are received. Required for automatic setup.",
+			Description: "GCP project where Eventarc resources are created and where VM create events are received.",
 		},
 		{
 			Name:        "region",
 			Label:       "Region",
 			Type:        configuration.FieldTypeString,
 			Required:    false,
-			Description: "Region used for resource naming (e.g. us-central1). Default: us-central1. Audit logs are project-wide.",
+			Description: "Region where Eventarc resources are provisioned (e.g. us-central1). Default: us-central1.",
 			Default:     "us-central1",
 		},
 	}
@@ -159,24 +152,9 @@ type OnVMCreatedMetadata struct {
 	WebhookURL string `json:"webhookUrl" mapstructure:"webhookUrl"`
 }
 
-func resolvePayloadBytes(body []byte) ([]byte, error) {
-	var envelope pubSubPushEnvelope
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		return body, nil
-	}
-	if envelope.Message.Data == "" {
-		return body, nil
-	}
-	decoded, err := base64.StdEncoding.DecodeString(envelope.Message.Data)
-	if err != nil {
-		return nil, fmt.Errorf("invalid Pub/Sub message.data base64: %w", err)
-	}
-	return decoded, nil
-}
-
 func (t *OnVMCreated) Setup(ctx core.TriggerContext) error {
 	if ctx.Integration == nil {
-		return fmt.Errorf("connect the GCP integration to this trigger to enable automatic webhook registration with Google Cloud (Cloud Logging sink to Pub/Sub)")
+		return fmt.Errorf("connect the GCP integration to this trigger to enable automatic event routing with Eventarc Advanced")
 	}
 
 	var config OnVMCreatedConfiguration
@@ -185,12 +163,13 @@ func (t *OnVMCreated) Setup(ctx core.TriggerContext) error {
 	}
 	projectID := strings.TrimSpace(config.ProjectID)
 	if projectID == "" {
-		return fmt.Errorf("project ID is required for automatic registration of the webhook with Google Cloud; set Project ID in the trigger configuration")
+		return fmt.Errorf("project ID is required for automatic registration with Eventarc Advanced; set Project ID in the trigger configuration")
 	}
 
 	webhookConfig := map[string]any{
 		"projectId": projectID,
 		"region":    strings.TrimSpace(config.Region),
+		"celFilter": CelFilter,
 	}
 	if err := ctx.Integration.RequestWebhook(webhookConfig); err != nil {
 		return fmt.Errorf("failed to request webhook for On VM Created: %w", err)
@@ -213,13 +192,8 @@ func (t *OnVMCreated) HandleWebhook(ctx core.WebhookRequestContext) (int, error)
 		return http.StatusInternalServerError, fmt.Errorf("failed to decode configuration: %w", err)
 	}
 
-	payloadBytes, err := resolvePayloadBytes(ctx.Body)
-	if err != nil {
-		return http.StatusBadRequest, err
-	}
-
 	var payload EventPayload
-	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+	if err := json.Unmarshal(ctx.Body, &payload); err != nil {
 		return http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err)
 	}
 
@@ -231,10 +205,10 @@ func (t *OnVMCreated) HandleWebhook(ctx core.WebhookRequestContext) (int, error)
 		serviceName, methodName, resourceName, eventData, operation = normalizedFromEnvelope(&payload)
 	} else {
 		var logEntry LogEntryDataPayload
-		if err := json.Unmarshal(payloadBytes, &logEntry); err != nil || logEntry.ProtoPayload == nil {
+		if err := json.Unmarshal(ctx.Body, &logEntry); err != nil || logEntry.ProtoPayload == nil {
 			return http.StatusOK, nil
 		}
-		serviceName, methodName, resourceName, eventData, operation = normalizedFromLogEntry(payloadBytes, &logEntry)
+		serviceName, methodName, resourceName, eventData, operation = normalizedFromLogEntry(ctx.Body, &logEntry)
 	}
 
 	if serviceName != computeServiceName {
