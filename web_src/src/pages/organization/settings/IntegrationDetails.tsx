@@ -1,4 +1,4 @@
-import { ArrowLeft, CircleCheckBig, CircleDashed, CircleX, ExternalLink, Loader2, Trash2 } from "lucide-react";
+import { ArrowLeft, CircleX, ExternalLink, Loader2, Plug, Trash2 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useState, useEffect, useMemo } from "react";
 import {
@@ -8,14 +8,19 @@ import {
   useUpdateIntegration,
 } from "@/hooks/useIntegrations";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ConfigurationFieldRenderer } from "@/ui/configurationFieldRenderer";
 import type { ConfigurationField } from "@/api-client";
 import { showErrorToast } from "@/utils/toast";
+import { getApiErrorMessage } from "@/utils/errors";
 import { getIntegrationTypeDisplayName } from "@/utils/integrationDisplayName";
 import { IntegrationIcon } from "@/ui/componentSidebar/integrationIcons";
 import { IntegrationInstructions } from "@/ui/IntegrationInstructions";
 import { PermissionTooltip } from "@/components/PermissionGate";
 import { usePermissions } from "@/contexts/PermissionsContext";
+import { Alert, AlertDescription } from "@/ui/alert";
+import { renderIntegrationMetadata } from "./integrationMetadataRenderers";
 
 interface IntegrationDetailsProps {
   organizationId: string;
@@ -26,6 +31,7 @@ export function IntegrationDetails({ organizationId }: IntegrationDetailsProps) 
   const { integrationId } = useParams<{ integrationId: string }>();
   const { canAct, isLoading: permissionsLoading } = usePermissions();
   const [configValues, setConfigValues] = useState<Record<string, unknown>>({});
+  const [integrationName, setIntegrationName] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const canUpdateIntegrations = canAct("integrations", "update");
   const canDeleteIntegrations = canAct("integrations", "delete");
@@ -46,6 +52,10 @@ export function IntegrationDetails({ organizationId }: IntegrationDetailsProps) 
       setConfigValues(integration.spec.configuration);
     }
   }, [integration]);
+
+  useEffect(() => {
+    setIntegrationName(integration?.metadata?.name || integration?.spec?.integrationName || "");
+  }, [integration?.metadata?.name, integration?.spec?.integrationName]);
 
   // Group usedIn nodes by workflow
   const workflowGroups = useMemo(() => {
@@ -71,13 +81,28 @@ export function IntegrationDetails({ organizationId }: IntegrationDetailsProps) 
     }));
   }, [integration?.status?.usedIn]);
 
+  const metadataContent = useMemo(
+    () => renderIntegrationMetadata(integration?.spec?.integrationName, integration!),
+    [integration],
+  );
+
   const handleConfigSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canUpdateIntegrations) return;
+
+    const nextName = integrationName.trim();
+    if (!nextName) {
+      showErrorToast("Integration name is required");
+      return;
+    }
+
     try {
-      await updateMutation.mutateAsync(configValues);
+      await updateMutation.mutateAsync({
+        name: nextName,
+        configuration: configValues,
+      });
     } catch (_error) {
-      showErrorToast("Failed to update configuration");
+      showErrorToast("Failed to update integration");
     }
   };
 
@@ -177,34 +202,29 @@ export function IntegrationDetails({ organizationId }: IntegrationDetailsProps) 
           className="w-6 h-6"
         />
         <div className="flex-1 min-w-[200px]">
-          <h4 className="text-2xl font-semibold">
+          <h4 className="text-2xl font-medium">
             {integration.metadata?.name ||
               getIntegrationTypeDisplayName(undefined, integration.spec?.integrationName) ||
               integration.spec?.integrationName}
           </h4>
-          {integration.spec?.integrationName && integration.metadata?.name !== integration.spec?.integrationName && (
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              Integration:{" "}
-              {getIntegrationTypeDisplayName(undefined, integration.spec?.integrationName) ||
-                integration.spec?.integrationName}
-            </p>
-          )}
         </div>
         <div className="flex items-center gap-2 ml-auto">
-          {integration.status?.state === "ready" ? (
-            <CircleCheckBig className="w-5 h-5 text-green-600 dark:text-green-400" />
-          ) : integration.status?.state === "error" ? (
-            <CircleX className="w-5 h-5 text-red-600 dark:text-red-400" />
-          ) : (
-            <CircleDashed className="w-5 h-5 text-orange-500 dark:text-orange-400" />
-          )}
-          <span
-            className={`text-xs font-semibold uppercase tracking-wide ${
+          <Plug
+            className={`w-4 h-4 ${
               integration.status?.state === "ready"
-                ? "text-green-600 dark:text-green-400"
+                ? "text-green-500"
                 : integration.status?.state === "error"
-                  ? "text-red-600 dark:text-red-400"
-                  : "text-orange-500 dark:text-orange-400"
+                  ? "text-red-600"
+                  : "text-amber-600"
+            }`}
+          />
+          <span
+            className={`text-sm font-medium ${
+              integration.status?.state === "ready"
+                ? "text-green-500"
+                : integration.status?.state === "error"
+                  ? "text-red-600"
+                  : "text-amber-600"
             }`}
           >
             {(integration.status?.state || "unknown").charAt(0).toUpperCase() +
@@ -215,14 +235,10 @@ export function IntegrationDetails({ organizationId }: IntegrationDetailsProps) 
 
       <div className="space-y-6">
         {integration.status?.state === "error" && integration.status?.stateDescription && (
-          <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 p-4">
-            <div className="flex items-start gap-3">
-              <CircleX className="w-5 h-5 text-red-600 dark:text-red-400 mt-0.5" />
-              <div>
-                <p className="text-sm text-red-700 dark:text-red-200 mt-1">{integration.status.stateDescription}</p>
-              </div>
-            </div>
-          </div>
+          <Alert variant="destructive" className="[&>svg+div]:translate-y-0 [&>svg]:top-[14px]">
+            <CircleX className="h-4 w-4" />
+            <AlertDescription>{integration.status.stateDescription}</AlertDescription>
+          </Alert>
         )}
 
         {integration?.status?.browserAction && (
@@ -231,6 +247,8 @@ export function IntegrationDetails({ organizationId }: IntegrationDetailsProps) 
             onContinue={integration.status.browserAction.url ? handleBrowserAction : undefined}
           />
         )}
+
+        {metadataContent}
 
         <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-300 dark:border-gray-800">
           <div className="p-6">
@@ -242,6 +260,21 @@ export function IntegrationDetails({ organizationId }: IntegrationDetailsProps) 
                 className="w-full"
               >
                 <form onSubmit={handleConfigSubmit} className="space-y-4">
+                  <div>
+                    <Label className="text-gray-800 dark:text-gray-100 mb-2">
+                      Integration Name
+                      <span className="text-gray-800 ml-1">*</span>
+                    </Label>
+                    <Input
+                      type="text"
+                      value={integrationName}
+                      onChange={(e) => setIntegrationName(e.target.value)}
+                      placeholder="e.g., my-app-integration"
+                      disabled={!canUpdateIntegrations}
+                    />
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">A unique name for this integration</p>
+                  </div>
+
                   {integrationDef.configuration.map((field: ConfigurationField) => (
                     <ConfigurationFieldRenderer
                       key={field.name}
@@ -257,18 +290,24 @@ export function IntegrationDetails({ organizationId }: IntegrationDetailsProps) 
                   ))}
 
                   <div className="flex items-center gap-3 pt-4">
-                    <Button type="submit" color="blue" disabled={updateMutation.isPending || !canUpdateIntegrations}>
+                    <Button
+                      type="submit"
+                      color="blue"
+                      disabled={updateMutation.isPending || !integrationName.trim() || !canUpdateIntegrations}
+                    >
                       {updateMutation.isPending ? (
                         <>
                           <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                           Saving...
                         </>
                       ) : (
-                        "Save Configuration"
+                        "Save"
                       )}
                     </Button>
                     {updateMutation.isError && (
-                      <span className="text-sm text-red-600 dark:text-red-400">Failed to update configuration</span>
+                      <span className="text-sm text-red-600 dark:text-red-400">
+                        Failed to update integration: {getApiErrorMessage(updateMutation.error)}
+                      </span>
                     )}
                   </div>
                 </form>
