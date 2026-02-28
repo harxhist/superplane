@@ -1,6 +1,8 @@
 package models
 
 import (
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -51,6 +53,84 @@ func ListCanvasMemoriesInTransaction(tx *gorm.DB, canvasID uuid.UUID) ([]CanvasM
 
 func ListCanvasMemories(canvasID uuid.UUID) ([]CanvasMemory, error) {
 	return ListCanvasMemoriesInTransaction(database.Conn(), canvasID)
+}
+
+func ListCanvasMemoriesByNamespaceInTransaction(tx *gorm.DB, canvasID uuid.UUID, namespace string) ([]CanvasMemory, error) {
+	var records []CanvasMemory
+	err := tx.
+		Where("canvas_id = ? AND namespace = ?", canvasID, namespace).
+		Order("created_at DESC").
+		Find(&records).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return records, nil
+}
+
+func ListCanvasMemoriesByNamespace(canvasID uuid.UUID, namespace string) ([]CanvasMemory, error) {
+	return ListCanvasMemoriesByNamespaceInTransaction(database.Conn(), canvasID, namespace)
+}
+
+func ListCanvasMemoriesByNamespaceAndMatchesInTransaction(tx *gorm.DB, canvasID uuid.UUID, namespace string, matches map[string]any) ([]CanvasMemory, error) {
+	if len(matches) == 0 {
+		return []CanvasMemory{}, fmt.Errorf("at least one match expression is required")
+	}
+
+	matchesJSON, err := json.Marshal(matches)
+	if err != nil {
+		return nil, err
+	}
+
+	var records []CanvasMemory
+
+	err = tx.
+		Where("canvas_id = ? AND namespace = ?", canvasID, namespace).
+		Where("values @> ?::jsonb", matchesJSON).
+		Order("created_at DESC").
+		Find(&records).
+		Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return records, nil
+}
+
+func ListCanvasMemoriesByNamespaceAndMatches(canvasID uuid.UUID, namespace string, matches map[string]any) ([]CanvasMemory, error) {
+	return ListCanvasMemoriesByNamespaceAndMatchesInTransaction(database.Conn(), canvasID, namespace, matches)
+}
+
+func FindFirstCanvasMemoryByNamespaceAndMatchesInTransaction(tx *gorm.DB, canvasID uuid.UUID, namespace string, matches map[string]any) (*CanvasMemory, error) {
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("at least one match expression is required")
+	}
+
+	matchesJSON, err := json.Marshal(matches)
+	if err != nil {
+		return nil, err
+	}
+
+	var record CanvasMemory
+
+	err = tx.
+		Where("canvas_id = ? AND namespace = ?", canvasID, namespace).
+		Where("values @> ?::jsonb", matchesJSON).
+		Order("created_at DESC").
+		Limit(1).
+		First(&record).
+		Error
+
+	if err != nil {
+		return nil, nil
+	}
+
+	return &record, nil
+}
+
+func FindFirstCanvasMemoryByNamespaceAndMatches(canvasID uuid.UUID, namespace string, matches map[string]any) (*CanvasMemory, error) {
+	return FindFirstCanvasMemoryByNamespaceAndMatchesInTransaction(database.Conn(), canvasID, namespace, matches)
 }
 
 func DeleteCanvasMemory(canvasID, memoryID uuid.UUID) error {

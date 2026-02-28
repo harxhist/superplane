@@ -26,3 +26,39 @@ func (c *CanvasMemoryContext) Add(namespace string, values any) error {
 
 	return models.AddCanvasMemoryInTransaction(c.tx, c.canvasID, namespace, values)
 }
+
+func (c *CanvasMemoryContext) Find(namespace string, matches map[string]any) ([]any, error) {
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		return nil, fmt.Errorf("namespace is required")
+	}
+
+	records, err := models.ListCanvasMemoriesByNamespaceAndMatchesInTransaction(c.tx, c.canvasID, namespace, matches)
+	if err != nil {
+		return nil, err
+	}
+
+	values := make([]any, 0, len(records))
+	for _, record := range records {
+		values = append(values, record.Values.Data())
+	}
+
+	return values, nil
+}
+
+func (c *CanvasMemoryContext) FindFirst(namespace string, matches map[string]any) (any, error) {
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		return nil, fmt.Errorf("namespace is required")
+	}
+
+	record, err := models.FindFirstCanvasMemoryByNamespaceAndMatchesInTransaction(c.tx, c.canvasID, namespace, matches)
+	if err != nil {
+		return nil, err
+	}
+	if record == nil {
+		return nil, nil
+	}
+
+	return record.Values.Data(), nil
+}
