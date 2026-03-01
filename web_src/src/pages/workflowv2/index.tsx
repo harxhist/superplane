@@ -1743,8 +1743,12 @@ export function WorkflowPageV2() {
     async (newNodeData: NewNodeData): Promise<string> => {
       if (!canvas || !organizationId || !canvasId) return "";
 
+      const latestWorkflow =
+        queryClient.getQueryData<CanvasesCanvas>(canvasKeys.detail(organizationId, canvasId)) || canvas;
+      if (!latestWorkflow) return "";
+
       // Save snapshot before making changes
-      saveWorkflowSnapshot(canvas);
+      saveWorkflowSnapshot(latestWorkflow);
 
       const { buildingBlock, configuration, position, sourceConnection, integrationRef } = newNodeData;
 
@@ -1752,7 +1756,7 @@ export function WorkflowPageV2() {
       const filteredConfiguration = filterVisibleConfiguration(configuration, buildingBlock.configuration || []);
 
       // Get existing node names for unique name generation
-      const existingNodeNames = (canvas.spec?.nodes || []).map((n) => n.name || "").filter(Boolean);
+      const existingNodeNames = (latestWorkflow.spec?.nodes || []).map((n) => n.name || "").filter(Boolean);
 
       // Generate unique node name based on component name + ordinal
       const uniqueNodeName = generateUniqueNodeName(buildingBlock.name || "node", existingNodeNames);
@@ -1780,7 +1784,7 @@ export function WorkflowPageV2() {
               y: Math.round(position.y),
             }
           : {
-              x: (canvas?.spec?.nodes?.length || 0) * 250,
+              x: (latestWorkflow?.spec?.nodes?.length || 0) * 250,
               y: 100,
             },
       };
@@ -1799,10 +1803,10 @@ export function WorkflowPageV2() {
       }
 
       // Add the new node to the workflow
-      const updatedNodes = [...(canvas.spec?.nodes || []), newNode];
+      const updatedNodes = [...(latestWorkflow.spec?.nodes || []), newNode];
 
       // If there's a source connection, create the edge
-      let updatedEdges = canvas.spec?.edges || [];
+      let updatedEdges = latestWorkflow.spec?.edges || [];
       if (sourceConnection) {
         const newEdge: ComponentsEdge = {
           sourceId: sourceConnection.nodeId,
@@ -1813,9 +1817,9 @@ export function WorkflowPageV2() {
       }
 
       const updatedWorkflow = {
-        ...canvas,
+        ...latestWorkflow,
         spec: {
-          ...canvas.spec,
+          ...latestWorkflow.spec,
           nodes: updatedNodes,
           edges: updatedEdges,
         },
@@ -1862,6 +1866,7 @@ export function WorkflowPageV2() {
         workflow: latestWorkflow,
         operations,
         buildingBlocks,
+        integrations,
       });
 
       queryClient.setQueryData(canvasKeys.detail(organizationId, canvasId), updatedWorkflow);
@@ -1879,6 +1884,7 @@ export function WorkflowPageV2() {
       canvasId,
       handleSaveWorkflow,
       markUnsavedChange,
+      integrations,
       organizationId,
       queryClient,
       saveWorkflowSnapshot,
@@ -1893,7 +1899,11 @@ export function WorkflowPageV2() {
     }): Promise<string> => {
       if (!canvas || !organizationId || !canvasId) return "";
 
-      saveWorkflowSnapshot(canvas);
+      const latestWorkflow =
+        queryClient.getQueryData<CanvasesCanvas>(canvasKeys.detail(organizationId, canvasId)) || canvas;
+      if (!latestWorkflow) return "";
+
+      saveWorkflowSnapshot(latestWorkflow);
 
       const placeholderName = "New Component";
       const newNodeId = generateNodeId("component", "node");
@@ -1919,11 +1929,11 @@ export function WorkflowPageV2() {
       };
 
       const updatedWorkflow = {
-        ...canvas,
+        ...latestWorkflow,
         spec: {
-          ...canvas.spec,
-          nodes: [...(canvas.spec?.nodes || []), newNode],
-          edges: [...(canvas.spec?.edges || []), newEdge],
+          ...latestWorkflow.spec,
+          nodes: [...(latestWorkflow.spec?.nodes || []), newNode],
+          edges: [...(latestWorkflow.spec?.edges || []), newEdge],
         },
       };
 
